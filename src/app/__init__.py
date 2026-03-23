@@ -1,0 +1,2 @@
+"""Foto-Such-MVP Paket."""
+

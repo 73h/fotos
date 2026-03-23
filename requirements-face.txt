@@ -1,0 +1,4 @@
+# Optionale Zusatzpakete fuer echte Gesichtsembeddings (InsightFace)
+insightface
+onnxruntime-gpu
+
