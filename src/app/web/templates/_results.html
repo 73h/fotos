@@ -1,0 +1,41 @@
+{% if message %}
+<p class="message">{{ message }}</p>
+{% endif %}
+
+{% if total > 0 %}
+<div class="meta">
+  <strong>{{ total }}</strong> Treffer, Seite {{ page }} / {{ pages }}
+</div>
+
+<div class="grid">
+  {% for item in items %}
+  <article class="card">
+    <a href="{{ item.image_url }}" target="_blank" rel="noopener noreferrer">
+      <img src="{{ item.thumb_url }}" alt="{{ item.path }}" loading="lazy" />
+    </a>
+    <div class="path">{{ item.path }}</div>
+    <div class="labels">{{ item.labels|join(', ') if item.labels else '-' }}</div>
+  </article>
+  {% endfor %}
+</div>
+
+<nav class="pager">
+  <button
+    {% if not has_prev %}disabled{% endif %}
+    hx-get="{{ url_for('web.search_partial') }}?q={{ query|urlencode }}&page={{ page - 1 }}&per_page={{ per_page }}"
+    hx-target="#results"
+    hx-push-url="true"
+  >
+    Zurueck
+  </button>
+  <button
+    {% if not has_next %}disabled{% endif %}
+    hx-get="{{ url_for('web.search_partial') }}?q={{ query|urlencode }}&page={{ page + 1 }}&per_page={{ per_page }}"
+    hx-target="#results"
+    hx-push-url="true"
+  >
+    Weiter
+  </button>
+</nav>
+{% endif %}
+

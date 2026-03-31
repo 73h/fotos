@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fotos Suche</title>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='web.css') }}" />
+  </head>
+  <body>
+    <main class="layout">
+      <h1>Fotos Suche</h1>
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>
+

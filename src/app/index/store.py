@@ -119,10 +119,15 @@ def upsert_photo(db_path: Path, record: ImageRecord, labels: list[str]) -> None:
         )
 
 
-def search_photos(db_path: Path, query: str, limit: int = 20) -> list[IndexedPhoto]:
+def search_photos_page(
+    db_path: Path,
+    query: str,
+    limit: int = 20,
+    offset: int = 0,
+) -> tuple[list[IndexedPhoto], int]:
     terms = [term.strip().lower() for term in query.split() if term.strip()]
     if not terms:
-        return []
+        return [], 0
 
     where_parts = ["search_blob LIKE ?" for _ in terms]
     sql = f"""
@@ -131,15 +136,22 @@ def search_photos(db_path: Path, query: str, limit: int = 20) -> list[IndexedPho
         WHERE {' AND '.join(where_parts)}
         ORDER BY modified_ts DESC
         LIMIT ?
+        OFFSET ?
+    """
+    count_sql = f"""
+        SELECT COUNT(*)
+        FROM photos
+        WHERE {' AND '.join(where_parts)}
     """
 
-    params: list[object] = [f"%{term}%" for term in terms]
-    params.append(limit)
+    count_params: list[object] = [f"%{term}%" for term in terms]
+    params: list[object] = [*count_params, limit, offset]
 
     with sqlite3.connect(db_path) as conn:
+        total_hits = conn.execute(count_sql, count_params).fetchone()[0]
         rows = conn.execute(sql, params).fetchall()
 
-    return [
+    items = [
         IndexedPhoto(
             path=row[0],
             labels=json.loads(row[1]),
@@ -148,4 +160,10 @@ def search_photos(db_path: Path, query: str, limit: int = 20) -> list[IndexedPho
         )
         for row in rows
     ]
+    return items, int(total_hits)
+
+
+def search_photos(db_path: Path, query: str, limit: int = 20) -> list[IndexedPhoto]:
+    items, _ = search_photos_page(db_path=db_path, query=query, limit=limit, offset=0)
+    return items
 

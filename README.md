@@ -4,11 +4,13 @@ Dieses Projekt bietet ein lauffaehiges Grundgeruest fuer lokale Foto-Indexierung
 
 ## Features im MVP
 
-- rekursiver Foto-Scan eines Ordners
+- rekursiver Foto-Scan eines oder mehrerer Ordner
+- inkrementelle Indexierung (Index kann schrittweise erweitert werden)
 - SQLite-Index (`data/photo_index.db`)
 - YOLOv8 Labels fuer `person`, `animal`, `object`
 - Erkennung bestimmter Personen per Referenzbilder (`enroll`)
 - Textsuche ueber Dateiname, Pfad und Labels
+- Websuche mit Flask + HTMX, Thumbnail-Cache und Pagination
 
 ## Voraussetzungen
 
@@ -49,11 +51,34 @@ python src/main.py index --root "D:\MeineFotos"
 python src/main.py index --root "D:\MeineFotos" --person-backend auto
 ```
 
+Index mit mehreren Root-Pfaden erweitern (inkrementell):
+
+```powershell
+python src/main.py index --root "D:\MeineFotos" --root "D:\UrlaubsFotos"
+python src/main.py index --root "D:\Fotos2024" --root "D:\Fotos2025" --root "D:\Archiv"
+```
+
 Suchen:
 
 ```powershell
 python src/main.py search --query "hund strand"
 python src/main.py search --query "person fahrrad" --limit 10
+```
+
+Webanwendung starten:
+
+```powershell
+python src/main.py web
+python src/main.py web --host 0.0.0.0 --port 5050
+python src/main.py web --db "data/photo_index.db" --cache-dir "data/cache"
+```
+
+Dann im Browser oeffnen: `http://127.0.0.1:5000`
+
+REST-Endpunkt fuer Integrationen:
+
+```powershell
+curl "http://127.0.0.1:5000/api/search?q=hund&page=1&per_page=24"
 ```
 
 Bestimmte Person einlernen:
@@ -103,4 +128,11 @@ $env:FOTOS_INSIGHTFACE_CTX="0"
 $env:FOTOS_INSIGHTFACE_DET_SIZE="640,640"
 python src/main.py index --root "D:\MeineFotos"
 ```
+
+## Web-App Details
+
+- Suche in der Web-UI nutzt denselben SQLite-Index wie die CLI.
+- Treffer werden als Thumbnail-Kacheln angezeigt.
+- Thumbnails werden in `data/cache/thumbnails` persistent zwischengespeichert.
+- Ergebnisse sind seitenweise abrufbar (`page`, `per_page`), auch ueber `/api/search`.
 

@@ -15,6 +15,7 @@ from .persons.service import (
     search_person_photos,
 )
 from .search.query import run_search
+from .web import create_app
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -24,7 +25,7 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("doctor", help="Diagnose aller Komponenten")
 
     index_parser = subparsers.add_parser("index", help="Fotos indexieren")
-    index_parser.add_argument("--root", required=True, help="Wurzelordner mit Fotos")
+    index_parser.add_argument("--root", required=True, action="append", help="Wurzelordner(s) mit Fotos (kann mehrmals angegeben werden)")
     index_parser.add_argument("--db", default=None, help="Pfad zur SQLite-DB")
     index_parser.add_argument(
         "--person-backend",
@@ -56,39 +57,50 @@ def _build_parser() -> argparse.ArgumentParser:
     person_search_parser.add_argument("--db", default=None, help="Pfad zur SQLite-DB")
     person_search_parser.add_argument("--limit", type=int, default=20, help="Maximale Treffer")
 
+    web_parser = subparsers.add_parser("web", help="Weboberflaeche starten")
+    web_parser.add_argument("--db", default=None, help="Pfad zur SQLite-DB")
+    web_parser.add_argument("--cache-dir", default=None, help="Pfad zum Thumbnail-Cache")
+    web_parser.add_argument("--host", default="127.0.0.1", help="Host fuer den Webserver")
+    web_parser.add_argument("--port", type=int, default=5000, help="Port fuer den Webserver")
+    web_parser.add_argument("--debug", action="store_true", help="Flask Debug-Modus")
+
     return parser
 
 
 def _index_command(
     config: AppConfig,
-    root: Path,
+    roots: list[Path],
     custom_db_path: str | None,
     person_backend: str | None,
 ) -> int:
     db_path = config.resolve_db_path(custom_db_path)
     ensure_schema(db_path)
 
-    images = scan_images(root=root, supported_extensions=config.supported_extensions)
-    if not images:
-        print(f"Keine Bilder gefunden unter: {root}")
-        return 0
+    total_images = 0
+    for root in roots:
+        images = scan_images(root=root, supported_extensions=config.supported_extensions)
+        if not images:
+            print(f"Keine Bilder gefunden unter: {root}")
+            continue
 
-    for record in tqdm(images, desc="Indexiere Fotos", unit="Foto"):
-        labels = set(infer_labels_from_path(record.path))
-        person_matches = match_persons_for_photo(
-            db_path=db_path,
-            photo_path=record.path,
-            preferred_backend=person_backend,
-        )
-        if person_matches:
-            labels.add("person")
-            for person_match in person_matches:
-                labels.add(f"person:{person_match.person_name.lower()}")
+        for record in tqdm(images, desc=f"Indexiere Fotos aus {root.name}", unit="Foto"):
+            labels = set(infer_labels_from_path(record.path))
+            person_matches = match_persons_for_photo(
+                db_path=db_path,
+                photo_path=record.path,
+                preferred_backend=person_backend,
+            )
+            if person_matches:
+                labels.add("person")
+                for person_match in person_matches:
+                    labels.add(f"person:{person_match.person_name.lower()}")
 
-        upsert_photo(db_path=db_path, record=record, labels=sorted(labels))
-        persist_matches_for_photo(db_path=db_path, photo_path=record.path, matches=person_matches)
+            upsert_photo(db_path=db_path, record=record, labels=sorted(labels))
+            persist_matches_for_photo(db_path=db_path, photo_path=record.path, matches=person_matches)
 
-    print(f"Index abgeschlossen: {len(images)} Dateien in {db_path}")
+        total_images += len(images)
+
+    print(f"Index abgeschlossen: {total_images} Dateien in {db_path}")
     return 0
 
 
@@ -166,6 +178,23 @@ def _search_person_command(
     return 0
 
 
+def _web_command(
+    config: AppConfig,
+    custom_db_path: str | None,
+    custom_cache_dir: str | None,
+    host: str,
+    port: int,
+    debug: bool,
+) -> int:
+    app = create_app(
+        app_config=config,
+        custom_db_path=custom_db_path,
+        custom_cache_dir=custom_cache_dir,
+    )
+    app.run(host=host, port=port, debug=debug)
+    return 0
+
+
 def main() -> int:
     parser = _build_parser()
     args = parser.parse_args()
@@ -176,7 +205,7 @@ def main() -> int:
     if args.command == "index":
         return _index_command(
             config=config,
-            root=Path(args.root),
+            roots=[Path(r) for r in args.root],
             custom_db_path=args.db,
             person_backend=args.person_backend,
         )
@@ -204,6 +233,15 @@ def main() -> int:
         )
     if args.command == "doctor":
         return run_doctor()
+    if args.command == "web":
+        return _web_command(
+            config=config,
+            custom_db_path=args.db,
+            custom_cache_dir=args.cache_dir,
+            host=args.host,
+            port=args.port,
+            debug=args.debug,
+        )
 
     parser.print_help()
     return 1

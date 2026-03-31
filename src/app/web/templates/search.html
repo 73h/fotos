@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<form
+  class="search-form"
+  hx-get="{{ url_for('web.search_partial') }}"
+  hx-target="#results"
+  hx-push-url="true"
+  hx-indicator="#loading"
+>
+  <input type="text" name="q" value="{{ query }}" placeholder="z. B. hund strand person:max" />
+  <input type="number" name="per_page" value="{{ per_page }}" min="1" max="200" />
+  <button type="submit">Suchen</button>
+  <span id="loading" class="loading">Lade...</span>
+</form>
+
+<section id="results">
+  {% include '_results.html' %}
+</section>
+{% endblock %}
+
