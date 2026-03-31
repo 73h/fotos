@@ -67,9 +67,9 @@ class IncrementalIndexTests(unittest.TestCase):
                 calls["labels"] += 1
                 return ["animal"]
 
-            def fake_match(*args, **kwargs) -> list[object]:
+            def fake_match(*args, **kwargs) -> tuple[list[object], int]:
                 calls["match"] += 1
-                return []
+                return [], 0
 
             cli_module.infer_labels_from_path = fake_infer_labels
             cli_module.match_persons_for_photo = fake_match

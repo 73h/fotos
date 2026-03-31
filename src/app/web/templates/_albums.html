@@ -1,0 +1,53 @@
+<section class="albums-panel">
+  <div class="albums-panel-header">
+    <h2>Alben</h2>
+    <p>Bilder per Drag&Drop auf ein Album ziehen.</p>
+  </div>
+
+  <form
+    class="album-create-form"
+    hx-post="{{ url_for('web.create_album_route') }}"
+    hx-target="#album-sidebar"
+    hx-swap="innerHTML"
+  >
+    <input type="text" name="name" placeholder="Neues Album" maxlength="120" />
+    <input type="hidden" name="q" value="{{ query }}" />
+    <input type="hidden" name="per_page" value="{{ per_page }}" />
+    <input type="hidden" name="max_persons" value="{{ max_persons if max_persons else '' }}" />
+    <input type="hidden" name="album_id" value="{{ active_album_id if active_album_id else '' }}" />
+    <button type="submit">Anlegen</button>
+  </form>
+
+  <div class="album-list">
+    <a
+      class="album-box {% if not active_album_id %}is-active{% endif %}"
+      href="{{ url_for('web.home', q=query, per_page=per_page, max_persons=max_persons) }}"
+    >
+      <span class="album-name">Alle Bilder</span>
+      <span class="album-count">—</span>
+    </a>
+
+    {% for album in albums %}
+    <div class="album-box-wrapper" data-album-id="{{ album.id }}">
+      <a
+        class="album-box {% if album.active %}is-active{% endif %}"
+        href="{{ url_for('web.home', q=query, per_page=per_page, max_persons=max_persons, album_id=album.id) }}"
+        data-album-drop="true"
+        data-album-id="{{ album.id }}"
+      >
+        <span class="album-name">{{ album.name }}</span>
+        <span class="album-count">{{ album.photo_count }}</span>
+      </a>
+      <div class="album-actions">
+        <button type="button" class="album-action-btn" data-album-id="{{ album.id }}" data-album-name="{{ album.name }}" onclick="renameAlbumPrompt(this)">✎</button>
+        <button type="button" class="album-action-btn delete" data-album-id="{{ album.id }}" data-album-name="{{ album.name }}" onclick="deleteAlbumPrompt(this)">✕</button>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if not albums %}
+  <p class="album-empty">Noch keine Alben vorhanden.</p>
+  {% endif %}
+</section>
+

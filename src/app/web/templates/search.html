@@ -1,21 +1,64 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<form
-  class="search-form"
-  hx-get="{{ url_for('web.search_partial') }}"
-  hx-target="#results"
-  hx-push-url="true"
-  hx-indicator="#loading"
->
-  <input type="text" name="q" value="{{ query }}" placeholder="z. B. hund strand person:max" />
-  <input type="number" name="per_page" value="{{ per_page }}" min="1" max="200" />
-  <button type="submit">Suchen</button>
-  <span id="loading" class="loading">Lade...</span>
-</form>
+<div class="search-layout">
+  <section class="search-main">
+    <form
+      id="search-form"
+      class="search-form"
+      hx-get="{{ url_for('web.search_partial') }}"
+      hx-target="#results"
+      hx-push-url="true"
+      hx-indicator="#loading"
+    >
+      <input type="text" name="q" value="{{ query }}" placeholder="z. B. hund strand person:max" />
+      <input type="number" name="per_page" value="{{ per_page }}" min="1" max="200" />
+      <select name="album_id" id="album-filter-select" onchange="document.getElementById('search-form').requestSubmit()">
+        <option value="">Alle Alben</option>
+        {% for album in albums %}
+        <option value="{{ album.id }}" {% if album.active %}selected{% endif %}>{{ album.name }} ({{ album.photo_count }})</option>
+        {% endfor %}
+      </select>
+      <select name="person_id" id="person-filter-select" onchange="filterByPerson()">
+        <option value="">Alle Personen</option>
+        {% for person in persons %}
+        <option value="{{ person.name }}">{{ person.name }} ({{ person.photo_count }})</option>
+        {% endfor %}
+      </select>
+      <label class="filter-solo" title="Nur Bilder anzeigen, auf denen genau eine Person erkannt wurde">
+        <input
+          type="checkbox"
+          id="solo-toggle"
+          onchange="document.getElementById('max-persons-input').value = this.checked ? '1' : ''"
+          {% if max_persons == 1 %}checked{% endif %}
+        />
+        Solo
+      </label>
+      <input type="hidden" name="max_persons" id="max-persons-input" value="{{ max_persons if max_persons else '' }}" />
+      <button type="submit">Suchen</button>
+      <span id="loading" class="loading">Lade...</span>
+    </form>
 
-<section id="results">
-  {% include '_results.html' %}
-</section>
+    {% if active_album_name %}
+    <div class="active-filter-bar">
+      Albumfilter aktiv: <strong>{{ active_album_name }}</strong>
+      <a
+        class="clear-filter-link"
+        href="{{ url_for('web.home', q=query, per_page=per_page, max_persons=max_persons) }}"
+      >
+        Filter entfernen
+      </a>
+    </div>
+    {% endif %}
+
+
+    <section id="results">
+      {% include '_results.html' %}
+    </section>
+  </section>
+
+  <aside id="album-sidebar" class="album-sidebar" data-sidebar-url="{{ url_for('web.albums_sidebar') }}">
+    {% include '_albums.html' %}
+  </aside>
+</div>
 {% endblock %}
-

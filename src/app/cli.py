@@ -15,6 +15,7 @@ from .index.store import (
     resolve_duplicate_marker,
     sha1_of_file,
     upsert_photo,
+    update_exif_only,
 )
 from .ingest import scan_images
 from .persons.service import (
@@ -83,6 +84,13 @@ def _build_parser() -> argparse.ArgumentParser:
     person_search_parser.add_argument("--name", required=True, help="Personenname")
     person_search_parser.add_argument("--db", default=None, help="Pfad zur SQLite-DB")
     person_search_parser.add_argument("--limit", type=int, default=20, help="Maximale Treffer")
+    person_search_parser.add_argument(
+        "--max-persons",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Nur Fotos anzeigen, auf denen maximal N Personen erkannt wurden (z.B. 1 fuer Solo-Bilder)",
+    )
 
     web_parser = subparsers.add_parser("web", help="Weboberflaeche starten")
     web_parser.add_argument("--db", default=None, help="Pfad zur SQLite-DB")
@@ -90,6 +98,9 @@ def _build_parser() -> argparse.ArgumentParser:
     web_parser.add_argument("--host", default="127.0.0.1", help="Host fuer den Webserver")
     web_parser.add_argument("--port", type=int, default=5000, help="Port fuer den Webserver")
     web_parser.add_argument("--debug", action="store_true", help="Flask Debug-Modus")
+
+    exif_parser = subparsers.add_parser("update-exif", help="EXIF-Daten schnell aktualisieren (ohne Neu-Indexierung)")
+    exif_parser.add_argument("--db", default=None, help="Pfad zur SQLite-DB")
 
     return parser
 
@@ -112,7 +123,7 @@ def _index_command(
 
     def prepare_record(record):
         labels = set(infer_labels_from_path(record.path))
-        person_matches = match_persons_for_photo(
+        person_matches, person_count = match_persons_for_photo(
             db_path=db_path,
             photo_path=record.path,
             preferred_backend=person_backend,
@@ -128,6 +139,7 @@ def _index_command(
             person_matches,
             sha1_of_file(record.path),
             phash_of_file(record.path),
+            person_count,
         )
 
     total_images = 0
@@ -165,7 +177,7 @@ def _index_command(
         if safe_workers == 1:
             iterator = (prepare_record(record) for record in to_process)
             progress = tqdm(iterator, total=len(to_process), desc=f"Indexiere Fotos aus {root.name}", unit="Foto")
-            for record, labels, person_matches, sha1, phash in progress:
+            for record, labels, person_matches, sha1, phash, person_count in progress:
                 duplicate_of_path, duplicate_kind, duplicate_score = resolve_duplicate_marker(
                     db_path=db_path,
                     photo_path=record.path,
@@ -186,6 +198,7 @@ def _index_command(
                     duplicate_of_path=duplicate_of_path,
                     duplicate_kind=duplicate_kind,
                     duplicate_score=duplicate_score,
+                    person_count=person_count,
                 )
                 persist_matches_for_photo(db_path=db_path, photo_path=record.path, matches=person_matches)
                 processed_for_root += 1
@@ -199,7 +212,7 @@ def _index_command(
                     unit="Foto",
                 )
                 for future in progress:
-                    record, labels, person_matches, sha1, phash = future.result()
+                    record, labels, person_matches, sha1, phash, person_count = future.result()
                     duplicate_of_path, duplicate_kind, duplicate_score = resolve_duplicate_marker(
                         db_path=db_path,
                         photo_path=record.path,
@@ -220,6 +233,7 @@ def _index_command(
                         duplicate_of_path=duplicate_of_path,
                         duplicate_kind=duplicate_kind,
                         duplicate_score=duplicate_score,
+                        person_count=person_count,
                     )
                     persist_matches_for_photo(db_path=db_path, photo_path=record.path, matches=person_matches)
                     processed_for_root += 1
@@ -291,6 +305,7 @@ def _search_person_command(
     person_name: str,
     custom_db_path: str | None,
     limit: int,
+    max_persons: int | None = None,
 ) -> int:
     db_path = config.resolve_db_path(custom_db_path)
     if not db_path.exists():
@@ -298,12 +313,14 @@ def _search_person_command(
         print("Bitte zuerst: python src/main.py index --root <dein_foto_ordner>")
         return 1
 
-    hits = search_person_photos(db_path=db_path, person_name=person_name, limit=limit)
+    hits = search_person_photos(db_path=db_path, person_name=person_name, limit=limit, max_persons=max_persons)
     if not hits:
-        print(f"Keine Treffer fuer Person '{person_name}'.")
+        filter_hint = f" (max. {max_persons} Person(en) im Bild)" if max_persons is not None else ""
+        print(f"Keine Treffer fuer Person '{person_name}'{filter_hint}.")
         return 0
 
-    print(f"Treffer fuer Person '{person_name}':")
+    filter_hint = f" (max. {max_persons} Person(en) im Bild)" if max_persons is not None else ""
+    print(f"Treffer fuer Person '{person_name}'{filter_hint}:")
     for index, hit in enumerate(hits, start=1):
         print(f"{index:>2}. {hit.path} | score: {hit.score:.3f}")
 
@@ -324,6 +341,25 @@ def _web_command(
         custom_cache_dir=custom_cache_dir,
     )
     app.run(host=host, port=port, debug=debug)
+    return 0
+
+
+def _update_exif_command(
+    config: AppConfig,
+    custom_db_path: str | None,
+) -> int:
+    """Aktualisiert nur die EXIF-Daten für alle Fotos in der Datenbank."""
+    db_path = config.resolve_db_path(custom_db_path)
+    if not db_path.exists():
+        print(f"Index nicht gefunden: {db_path}")
+        return 1
+
+    # Stelle sicher, dass die neuen Spalten existieren
+    ensure_schema(db_path)
+
+    print(f"Aktualisiere EXIF-Daten für alle Fotos in {db_path}...")
+    updated = update_exif_only(db_path=db_path)
+    print(f"✓ {updated} Fotos aktualisiert")
     return 0
 
 
@@ -366,6 +402,7 @@ def main() -> int:
             person_name=args.name,
             custom_db_path=args.db,
             limit=args.limit,
+            max_persons=args.max_persons,
         )
     if args.command == "doctor":
         return run_doctor()
@@ -377,6 +414,11 @@ def main() -> int:
             host=args.host,
             port=args.port,
             debug=args.debug,
+        )
+    if args.command == "update-exif":
+        return _update_exif_command(
+            config=config,
+            custom_db_path=args.db,
         )
 
     parser.print_help()

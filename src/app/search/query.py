@@ -12,7 +12,16 @@ def run_search_page(
     query: str,
     limit: int = 20,
     offset: int = 0,
+    max_persons: int | None = None,
+    album_id: int | None = None,
 ) -> tuple[list[IndexedPhoto], int]:
-    return search_photos_page(db_path=db_path, query=query, limit=limit, offset=offset)
+    return search_photos_page(
+        db_path=db_path,
+        query=query,
+        limit=limit,
+        offset=offset,
+        max_persons=max_persons,
+        album_id=album_id,
+    )
 
 

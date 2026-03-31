@@ -21,6 +21,13 @@ class PersonPhotoHit:
     modified_ts: float
 
 
+@dataclass(frozen=True)
+class PersonSummary:
+    id: int
+    name: str
+    photo_count: int
+
+
 def upsert_person(db_path: Path, name: str) -> int:
     normalized_name = name.strip()
     if not normalized_name:
@@ -120,19 +127,32 @@ def replace_photo_person_matches(
         )
 
 
-def search_photos_by_person_name(db_path: Path, person_name: str, limit: int) -> list[PersonPhotoHit]:
+def search_photos_by_person_name(
+    db_path: Path,
+    person_name: str,
+    limit: int,
+    max_persons: int | None = None,
+) -> list[PersonPhotoHit]:
+    extra_where = ""
+    params: list[object] = [person_name.strip()]
+    if max_persons is not None:
+        extra_where = "AND (ph.person_count IS NULL OR ph.person_count <= ?)"
+        params.append(max_persons)
+    params.append(limit)
+
     with sqlite3.connect(db_path) as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT m.photo_path, m.score, COALESCE(ph.modified_ts, 0)
             FROM photo_person_matches m
             JOIN persons p ON p.id = m.person_id
             LEFT JOIN photos ph ON ph.path = m.photo_path
             WHERE lower(p.name) = lower(?)
+            {extra_where}
             ORDER BY m.score DESC, COALESCE(ph.modified_ts, 0) DESC
             LIMIT ?
             """,
-            (person_name.strip(), limit),
+            params,
         ).fetchall()
 
     return [
@@ -140,3 +160,21 @@ def search_photos_by_person_name(db_path: Path, person_name: str, limit: int) ->
         for path, score, modified_ts in rows
     ]
 
+
+def list_persons(db_path: Path) -> list[PersonSummary]:
+    """Listet alle Personen mit der Anzahl ihrer Fotos auf."""
+    if not db_path.exists():
+        return []
+
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT p.id, p.name, COUNT(m.photo_path)
+            FROM persons p
+            LEFT JOIN photo_person_matches m ON m.person_id = p.id
+            GROUP BY p.id, p.name
+            ORDER BY lower(p.name) ASC, p.id ASC
+            """
+        ).fetchall()
+
+    return [PersonSummary(id=int(row[0]), name=str(row[1]), photo_count=int(row[2])) for row in rows]

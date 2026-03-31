@@ -6,10 +6,10 @@
     <title>Fotos Suche</title>
     <script src="https://unpkg.com/htmx.org@1.9.12"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='web.css') }}" />
+    <script defer src="{{ url_for('static', filename='web.js') }}"></script>
   </head>
   <body>
     <main class="layout">
-      <h1>Fotos Suche</h1>
       {% block content %}{% endblock %}
     </main>
   </body>

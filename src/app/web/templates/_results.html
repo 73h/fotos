@@ -7,9 +7,13 @@
   <strong>{{ total }}</strong> Treffer, Seite {{ page }} / {{ pages }}
 </div>
 
+{% if items %}
 <div class="grid">
   {% for item in items %}
-  <article class="card">
+  <article class="card photo-card" draggable="true" data-photo-token="{{ item.token }}" data-photo-path="{{ item.path }}" style="position: relative;">
+    {% if active_album_id %}
+    <button type="button" class="photo-remove-btn" onclick="removePhotoFromAlbum('{{ item.token }}', {{ active_album_id }}, this)" style="position: absolute; top: 5px; right: 5px; z-index: 10; background: rgba(255,0,0,0.7); color: white; border: none; border-radius: 3px; padding: 2px 6px; cursor: pointer; font-size: 12px;">✕</button>
+    {% endif %}
     <a href="{{ item.image_url }}" target="_blank" rel="noopener noreferrer">
       <img src="{{ item.thumb_url }}" alt="{{ item.path }}" loading="lazy" />
     </a>
@@ -24,11 +28,14 @@
   </article>
   {% endfor %}
 </div>
+{% endif %}
 
+{% set mp_param = ('&max_persons=' ~ max_persons) if max_persons else '' %}
+{% set album_param = ('&album_id=' ~ active_album_id) if active_album_id else '' %}
 <nav class="pager">
   <button
     {% if not has_prev %}disabled{% endif %}
-    hx-get="{{ url_for('web.search_partial') }}?q={{ query|urlencode }}&page={{ page - 1 }}&per_page={{ per_page }}"
+    hx-get="{{ url_for('web.search_partial') }}?q={{ query|urlencode }}&page={{ page - 1 }}&per_page={{ per_page }}{{ mp_param }}{{ album_param }}"
     hx-target="#results"
     hx-push-url="true"
   >
@@ -36,7 +43,7 @@
   </button>
   <button
     {% if not has_next %}disabled{% endif %}
-    hx-get="{{ url_for('web.search_partial') }}?q={{ query|urlencode }}&page={{ page + 1 }}&per_page={{ per_page }}"
+    hx-get="{{ url_for('web.search_partial') }}?q={{ query|urlencode }}&page={{ page + 1 }}&per_page={{ per_page }}{{ mp_param }}{{ album_param }}"
     hx-target="#results"
     hx-push-url="true"
   >
@@ -44,4 +51,3 @@
   </button>
 </nav>
 {% endif %}
-

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from contextlib import redirect_stderr, redirect_stdout
+import logging
 import os
+from threading import Lock
 
 import numpy as np
 from PIL import Image
@@ -52,6 +55,7 @@ class InsightFaceBackend(EmbeddingBackend):
     _app: object
 
     def __init__(self) -> None:
+        _configure_inference_logging()
         try:
             from insightface.app import FaceAnalysis  # type: ignore[import-not-found]
         except Exception as error:  # pragma: no cover - optional dependency
@@ -61,8 +65,12 @@ class InsightFaceBackend(EmbeddingBackend):
         context_id = int(os.getenv("FOTOS_INSIGHTFACE_CTX", "0"))
         det_size = tuple(int(v.strip()) for v in os.getenv("FOTOS_INSIGHTFACE_DET_SIZE", "640,640").split(","))
 
-        app = FaceAnalysis(name=model_name)
-        app.prepare(ctx_id=context_id, det_size=det_size)
+        def _init_app():
+            app_obj = FaceAnalysis(name=model_name)
+            app_obj.prepare(ctx_id=context_id, det_size=det_size)
+            return app_obj
+
+        app = _run_quietly(_init_app)
         setattr(self, "_app", app)
         super().__init__(name="insightface", vector_dim=512)
 
@@ -80,25 +88,68 @@ class InsightFaceBackend(EmbeddingBackend):
         return embedding.tolist()
 
 
+def _configure_inference_logging() -> None:
+    # Unterdrueckt laute Bibliotheksausgaben, Fortschritt bleibt ueber tqdm sichtbar.
+    if os.getenv("FOTOS_QUIET_INFERENCE", "1") != "1":
+        return
+    logging.getLogger("insightface").setLevel(logging.ERROR)
+    logging.getLogger("onnxruntime").setLevel(logging.ERROR)
+    os.environ.setdefault("ORT_LOG_SEVERITY_LEVEL", "4")
+    os.environ.setdefault("ORT_LOG_VERBOSITY_LEVEL", "0")
+
+
+def _run_quietly(factory):
+    if os.getenv("FOTOS_QUIET_INFERENCE", "1") != "1":
+        return factory()
+    with open(os.devnull, "w", encoding="ascii") as devnull:
+        with redirect_stdout(devnull), redirect_stderr(devnull):
+            return factory()
+
+
+_BACKEND_CACHE: dict[tuple[str, str, str, str], EmbeddingBackend] = {}
+_BACKEND_CACHE_LOCK = Lock()
+
+
+def _resolve_backend_cached(
+    backend_name: str,
+    model_name: str,
+    context_id: str,
+    det_size: str,
+) -> EmbeddingBackend:
+    cache_key = (backend_name, model_name, context_id, det_size)
+    with _BACKEND_CACHE_LOCK:
+        cached = _BACKEND_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
+        if backend_name == "histogram":
+            backend = HistogramBackend()
+        elif backend_name == "insightface":
+            try:
+                backend = InsightFaceBackend()
+            except Exception:
+                backend = HistogramBackend()
+        elif backend_name == "auto":
+            try:
+                backend = InsightFaceBackend()
+            except Exception:
+                backend = HistogramBackend()
+        else:
+            raise ValueError(
+                "Ungueltiger Personen-Backend-Name. Erlaubt sind: auto, insightface, histogram"
+            )
+
+        _BACKEND_CACHE[cache_key] = backend
+        return backend
+
+
 def resolve_backend(preferred_backend: str | None = None) -> EmbeddingBackend:
     backend_name = (preferred_backend or os.getenv("FOTOS_PERSON_BACKEND", "auto")).strip().lower()
+    return _resolve_backend_cached(
+        backend_name=backend_name,
+        model_name=os.getenv("FOTOS_INSIGHTFACE_MODEL", "buffalo_l"),
+        context_id=os.getenv("FOTOS_INSIGHTFACE_CTX", "0"),
+        det_size=os.getenv("FOTOS_INSIGHTFACE_DET_SIZE", "640,640"),
+    )
 
-    if backend_name == "histogram":
-        return HistogramBackend()
-
-    if backend_name == "insightface":
-        try:
-            return InsightFaceBackend()
-        except Exception:
-            return HistogramBackend()
-
-    if backend_name != "auto":
-        raise ValueError(
-            "Ungueltiger Personen-Backend-Name. Erlaubt sind: auto, insightface, histogram"
-        )
-
-    try:
-        return InsightFaceBackend()
-    except Exception:
-        return HistogramBackend()
 

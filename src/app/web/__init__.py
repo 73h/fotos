@@ -1,6 +1,7 @@
 from flask import Flask
 
 from ..config import AppConfig
+from ..index.store import ensure_schema
 
 
 def create_app(
@@ -12,6 +13,7 @@ def create_app(
     app.config["DB_PATH"] = app_config.resolve_db_path(custom_db_path)
     app.config["CACHE_DIR"] = app_config.resolve_cache_dir(custom_cache_dir)
     app.config["THUMB_SIZE"] = 360
+    ensure_schema(app.config["DB_PATH"])
 
     from .routes import web_blueprint
 

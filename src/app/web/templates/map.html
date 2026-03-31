@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Foto-Karte</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: #f5f5f5;
+        }
+
+        header {
+            background: #fff;
+            border-bottom: 1px solid #e0e0e0;
+            padding: 1rem;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        header h1 {
+            font-size: 1.5rem;
+            color: #333;
+        }
+
+        header p {
+            color: #666;
+            font-size: 0.9rem;
+            margin-top: 0.25rem;
+        }
+
+        .controls {
+            margin-top: 1rem;
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .controls input {
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+
+        .controls button {
+            padding: 0.5rem 1rem;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+
+        .controls button:hover {
+            background: #0056b3;
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .container {
+            position: relative;
+            width: 100%;
+            height: calc(100vh - 150px);
+            margin-top: 1rem;
+        }
+
+        .info-box {
+            background: #fff;
+            padding: 1rem;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            margin-top: 0.5rem;
+        }
+
+        .photo-count {
+            color: #666;
+            font-size: 0.9rem;
+        }
+
+        .leaflet-popup-content {
+            width: 250px !important;
+        }
+
+        .popup-image {
+            width: 100%;
+            height: auto;
+            border-radius: 4px;
+            margin-bottom: 0.5rem;
+            cursor: pointer;
+        }
+
+        .popup-info {
+            font-size: 0.85rem;
+            color: #666;
+        }
+
+        .popup-title {
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>🗺️ Foto-Karte</h1>
+        <p>Alle Fotos mit GPS-Daten auf der Karte</p>
+        <div class="controls">
+            <input
+                type="text"
+                id="radiusInput"
+                placeholder="Radius (km)"
+                value="5"
+                style="width: 120px;"
+            />
+            <button onclick="fitToPhotos()">Auf Fotos zoomen</button>
+            <span class="photo-count">
+                <span id="photoCount">0</span> Fotos mit GPS-Daten
+            </span>
+        </div>
+    </header>
+
+    <div class="container">
+        <div id="map"></div>
+    </div>
+
+    <script>
+        // Initialisiere die Karte (Zentrum auf Europa)
+        const map = L.map("map").setView([50, 10], 4);
+
+        // OpenStreetMap Tiles
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            maxZoom: 19,
+        }).addTo(map);
+
+        let markers = [];
+        let photos = [];
+
+        async function loadPhotos() {
+            try {
+                const response = await fetch("/api/photos-with-location");
+                const data = await response.json();
+                photos = data.photos;
+
+                // Lösche alte Marker
+                markers.forEach((marker) => map.removeLayer(marker));
+                markers = [];
+
+                // Füge neue Marker hinzu
+                photos.forEach((photo) => {
+                    const popup = L.popup().setContent(`
+                        <div class="popup-title">${photo.path.split("/").pop()}</div>
+                        <img src="${photo.thumb_url}" alt="Thumbnail" class="popup-image" onclick="window.open('${photo.image_url}', '_blank')" />
+                        <div class="popup-info">
+                            <div><strong>Kamera:</strong> ${photo.camera}</div>
+                            <div><strong>Lat:</strong> ${photo.latitude.toFixed(4)}</div>
+                            <div><strong>Lon:</strong> ${photo.longitude.toFixed(4)}</div>
+                            <div><strong>Aufnahme:</strong> ${new Date(photo.modified_ts * 1000).toLocaleDateString("de-DE")}</div>
+                        </div>
+                    `);
+
+                    const marker = L.marker([photo.latitude, photo.longitude])
+                        .bindPopup(popup)
+                        .addTo(map);
+                    markers.push(marker);
+                });
+
+                document.getElementById("photoCount").textContent = photos.length;
+            } catch (error) {
+                console.error("Fehler beim Laden der Fotos:", error);
+            }
+        }
+
+        function fitToPhotos() {
+            if (markers.length === 0) {
+                alert("Keine Fotos mit GPS-Daten gefunden.");
+                return;
+            }
+
+            const group = new L.featureGroup(markers);
+            map.fitBounds(group.getBounds(), { padding: [50, 50] });
+        }
+
+        // Lade Fotos beim Seitenladen
+        loadPhotos();
+
+        // Auto-Refresh alle 30 Sekunden
+        setInterval(loadPhotos, 30000);
+    </script>
+</body>
+</html>
+

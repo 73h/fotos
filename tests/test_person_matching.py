@@ -30,13 +30,14 @@ class PersonMatchingTests(unittest.TestCase):
                 image = Image.new("RGB", (128, 128), color=(220, 120, 90))
                 image.save(image_path)
 
-                backend_name, signatures = service.extract_person_signatures(
+                backend_name, signatures, box_count = service.extract_person_signatures(
                     image_path,
                     preferred_backend="histogram",
                 )
                 self.assertEqual(backend_name, "histogram")
                 self.assertGreaterEqual(len(signatures), 1)
                 self.assertEqual(len(signatures[0]), 96)
+                self.assertIsInstance(box_count, int)
         finally:
             service.yolo_labels.detect_person_boxes = original
 

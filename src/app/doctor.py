@@ -93,9 +93,9 @@ def run_doctor() -> int:
     env_vars = {
         "FOTOS_YOLO_MODEL": "yolov8n.pt",
         "FOTOS_YOLO_CONF": "0.25",
-        "FOTOS_PERSON_THRESHOLD": "0.90",
+        "FOTOS_PERSON_THRESHOLD": "0.38",
         "FOTOS_PERSON_TOP_K": "3",
-        "FOTOS_PERSON_BACKEND": "auto",
+        "FOTOS_PERSON_BACKEND": "insightface",
         "FOTOS_INSIGHTFACE_MODEL": "buffalo_l",
     }
     for var, default_val in env_vars.items():

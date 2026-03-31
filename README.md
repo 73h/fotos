@@ -11,6 +11,7 @@ Dieses Projekt bietet ein lauffaehiges Grundgeruest fuer lokale Foto-Indexierung
 - Duplikat-Markierung (exakt via SHA1, optional nahe Duplikate via pHash)
 - YOLOv8 Labels fuer `person`, `animal`, `object`
 - Erkennung bestimmter Personen per Referenzbilder (`enroll`)
+- Alben anlegen, benennen und Fotos zuweisen
 - Textsuche ueber Dateiname, Pfad und Labels
 - Websuche mit Flask + HTMX, Thumbnail-Cache und Pagination
 
@@ -89,6 +90,9 @@ python src/main.py web --db "data/photo_index.db" --cache-dir "data/cache"
 
 Dann im Browser oeffnen: `http://127.0.0.1:5000`
 
+In der Web-UI kannst du rechts Alben anlegen und Bilder per Drag&Drop in ein Album ziehen.
+Ein Klick auf ein Album aktiviert den Albumfilter fuer die Suche.
+
 REST-Endpunkt fuer Integrationen:
 
 ```powershell
@@ -107,6 +111,18 @@ Nach Person suchen:
 ```powershell
 python src/main.py search-person --name "Max" --limit 20
 python src/main.py search --query "person:max"
+```
+
+Nur Solo-Bilder (Person allein, keine anderen Personen im Bild):
+
+```powershell
+python src/main.py search-person --name "Max" --limit 20 --max-persons 1
+```
+
+Ueber Web-API (auch in der WebUI per Query-Parameter):
+
+```powershell
+curl "http://127.0.0.1:5000/api/search?q=person:max&max_persons=1"
 ```
 
 Schneller Selbsttest:
@@ -133,13 +149,14 @@ Optional konfigurierbar:
 ```powershell
 $env:FOTOS_YOLO_MODEL="yolov8n.pt"
 $env:FOTOS_YOLO_CONF="0.25"
-$env:FOTOS_PERSON_THRESHOLD="0.90"
+$env:FOTOS_PERSON_THRESHOLD="0.38"
 $env:FOTOS_PERSON_TOP_K="3"
 $env:FOTOS_PERSON_FULL_IMAGE_FALLBACK="1"
-$env:FOTOS_PERSON_BACKEND="auto"
+$env:FOTOS_PERSON_BACKEND="insightface"
 $env:FOTOS_INSIGHTFACE_MODEL="buffalo_l"
 $env:FOTOS_INSIGHTFACE_CTX="0"
 $env:FOTOS_INSIGHTFACE_DET_SIZE="640,640"
+$env:FOTOS_QUIET_INFERENCE  = "1"
 python src/main.py index --root "D:\MeineFotos"
 ```
 
@@ -149,4 +166,6 @@ python src/main.py index --root "D:\MeineFotos"
 - Treffer werden als Thumbnail-Kacheln angezeigt.
 - Thumbnails werden in `data/cache/thumbnails` persistent zwischengespeichert.
 - Ergebnisse sind seitenweise abrufbar (`page`, `per_page`), auch ueber `/api/search`.
+- Rechts koennen Alben angelegt werden; Trefferkarten lassen sich per Drag&Drop in Alben schieben.
+- Albumfilter ist ueber die Album-Boxen in der Web-UI und ueber `album_id` in `/api/search` verfuegbar.
 

@@ -20,7 +20,7 @@ from .store import (
     upsert_person,
 )
 
-_PERSON_THRESHOLD = float(os.getenv("FOTOS_PERSON_THRESHOLD", "0.90"))
+_PERSON_THRESHOLD = float(os.getenv("FOTOS_PERSON_THRESHOLD", "0.38"))
 _PERSON_TOP_K = int(os.getenv("FOTOS_PERSON_TOP_K", "3"))
 _USE_FULL_IMAGE_FALLBACK = os.getenv("FOTOS_PERSON_FULL_IMAGE_FALLBACK", "1") == "1"
 
@@ -43,9 +43,10 @@ class EnrollResult:
 def extract_person_signatures(
     photo_path: Path,
     preferred_backend: str | None = None,
-) -> tuple[str, list[list[float]]]:
+) -> tuple[str, list[list[float]], int]:
+    """Gibt (backend_name, signatures, person_box_count) zurück."""
     if not photo_path.exists():
-        return ("unknown", [])
+        return ("unknown", [], 0)
 
     backend = resolve_backend(preferred_backend)
 
@@ -53,6 +54,7 @@ def extract_person_signatures(
     try:
         with Image.open(photo_path) as image:
             boxes = yolo_labels.detect_person_boxes(photo_path)
+            person_box_count = len(boxes)
             for x1, y1, x2, y2 in boxes:
                 crop = image.crop((x1, y1, x2, y2))
                 vector = backend.vector_from_image(crop)
@@ -64,9 +66,9 @@ def extract_person_signatures(
                 if vector is not None:
                     signatures.append(vector)
     except Exception:
-        return (backend.name, [])
+        return (backend.name, [], 0)
 
-    return (backend.name, signatures)
+    return (backend.name, signatures, person_box_count)
 
 
 def _group_references_by_person(
@@ -108,7 +110,7 @@ def enroll_person(
     backend_name = backend.name
 
     for image_record in images:
-        used_backend_name, signatures = extract_person_signatures(
+        used_backend_name, signatures, _box_count = extract_person_signatures(
             image_record.path,
             preferred_backend=preferred_backend,
         )
@@ -143,17 +145,18 @@ def match_persons_for_photo(
     db_path: Path,
     photo_path: Path,
     preferred_backend: str | None = None,
-) -> list[PersonMatch]:
-    backend_name, signatures = extract_person_signatures(
+) -> tuple[list[PersonMatch], int]:
+    """Gibt (matches, person_box_count) zurück."""
+    backend_name, signatures, person_count = extract_person_signatures(
         photo_path,
         preferred_backend=preferred_backend,
     )
     if not signatures:
-        return []
+        return [], person_count
 
     refs = list_person_references(db_path, backend_filter=backend_name)
     if not refs:
-        return []
+        return [], person_count
 
     refs_by_person = _group_references_by_person(refs)
     best_by_person: dict[int, PersonMatch] = {}
@@ -165,7 +168,7 @@ def match_persons_for_photo(
                 best_by_person[match.person_id] = match
 
     matches = sorted(best_by_person.values(), key=lambda item: item.score, reverse=True)
-    return matches[:_PERSON_TOP_K]
+    return matches[:_PERSON_TOP_K], person_count
 
 
 def persist_matches_for_photo(db_path: Path, photo_path: Path, matches: list[PersonMatch]) -> None:
@@ -176,8 +179,8 @@ def persist_matches_for_photo(db_path: Path, photo_path: Path, matches: list[Per
     )
 
 
-def search_person_photos(db_path: Path, person_name: str, limit: int = 20) -> list[PersonPhotoHit]:
+def search_person_photos(db_path: Path, person_name: str, limit: int = 20, max_persons: int | None = None) -> list[PersonPhotoHit]:
     if limit <= 0:
         return []
-    return search_photos_by_person_name(db_path=db_path, person_name=person_name, limit=limit)
+    return search_photos_by_person_name(db_path=db_path, person_name=person_name, limit=limit, max_persons=max_persons)
 

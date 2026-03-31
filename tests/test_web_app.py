@@ -1,4 +1,6 @@
 import sys
+import base64
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,7 +37,12 @@ class WebAppTests(unittest.TestCase):
                     size_bytes=stat.st_size,
                     modified_ts=stat.st_mtime + index,
                 )
-                upsert_photo(db_path=db_path, record=record, labels=["animal", "urlaub"])
+                upsert_photo(
+                    db_path=db_path,
+                    record=record,
+                    labels=["animal", "urlaub"],
+                    person_count=2,
+                )
 
             app = create_app(
                 app_config=AppConfig.from_workspace(workspace_root=workspace),
@@ -61,6 +68,49 @@ class WebAppTests(unittest.TestCase):
 
             cached_files = list((cache_dir / "thumbnails").rglob("*.jpg"))
             self.assertGreaterEqual(len(cached_files), 1)
+
+            default_response = client.get("/api/search?q=animal")
+            self.assertEqual(default_response.status_code, 200)
+            default_payload = default_response.get_json()
+            assert default_payload is not None
+            self.assertEqual(default_payload["per_page"], 24)
+
+            create_album_response = client.post(
+                "/albums",
+                data={"name": "Marie Favoriten", "q": "animal", "per_page": 24},
+            )
+            self.assertEqual(create_album_response.status_code, 200)
+            self.assertIn("Marie Favoriten", create_album_response.get_data(as_text=True))
+
+            with sqlite3.connect(db_path) as conn:
+                album_row = conn.execute("SELECT id FROM albums WHERE name = ?", ("Marie Favoriten",)).fetchone()
+            self.assertIsNotNone(album_row)
+            album_id = int(album_row[0])
+
+            photo_token = base64.urlsafe_b64encode(str(photos_dir / "sample_0.jpg").encode("utf-8")).decode("ascii").rstrip("=")
+            add_photo_response = client.post(
+                f"/albums/{album_id}/add-photo",
+                data={"photo_token": photo_token},
+            )
+            self.assertEqual(add_photo_response.status_code, 200)
+            add_payload = add_photo_response.get_json()
+            assert add_payload is not None
+            self.assertTrue(add_payload["ok"])
+            self.assertEqual(add_payload["photo_count"], 1)
+
+            album_filter_response = client.get(f"/api/search?album_id={album_id}")
+            self.assertEqual(album_filter_response.status_code, 200)
+            album_payload = album_filter_response.get_json()
+            assert album_payload is not None
+            self.assertEqual(album_payload["total"], 1)
+            self.assertEqual(album_payload["active_album_id"], album_id)
+            self.assertEqual(len(album_payload["items"]), 1)
+
+            partial_response = client.get("/search?q=animal")
+            self.assertEqual(partial_response.status_code, 200)
+            html = partial_response.get_data(as_text=True)
+            self.assertNotIn("Person(en)", html)
+            self.assertNotIn("In Album ziehen", html)
 
 
 if __name__ == "__main__":
