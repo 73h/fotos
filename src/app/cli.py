@@ -1,4 +1,6 @@
 import argparse
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from tqdm import tqdm
@@ -6,7 +8,14 @@ from tqdm import tqdm
 from .config import AppConfig
 from .doctor import run_doctor
 from .detectors.labels import infer_labels_from_path
-from .index.store import ensure_schema, upsert_photo
+from .index.store import (
+    ensure_schema,
+    get_photo_metadata_map,
+    phash_of_file,
+    resolve_duplicate_marker,
+    sha1_of_file,
+    upsert_photo,
+)
 from .ingest import scan_images
 from .persons.service import (
     enroll_person,
@@ -27,6 +36,24 @@ def _build_parser() -> argparse.ArgumentParser:
     index_parser = subparsers.add_parser("index", help="Fotos indexieren")
     index_parser.add_argument("--root", required=True, action="append", help="Wurzelordner(s) mit Fotos (kann mehrmals angegeben werden)")
     index_parser.add_argument("--db", default=None, help="Pfad zur SQLite-DB")
+    index_parser.add_argument("--force-reindex", action="store_true", help="Alle Dateien erneut verarbeiten (Skip-Check deaktivieren)")
+    index_parser.add_argument(
+        "--index-workers",
+        type=int,
+        default=max(1, min(8, os.cpu_count() or 4)),
+        help="Anzahl paralleler Worker fuer Vorverarbeitung (Default: min(8, CPU))",
+    )
+    index_parser.add_argument(
+        "--near-duplicates",
+        action="store_true",
+        help="Nahe Duplikate per pHash markieren (langsamer als exakte Duplikate)",
+    )
+    index_parser.add_argument(
+        "--phash-threshold",
+        type=int,
+        default=6,
+        help="Maximale Hamming-Distanz fuer near duplicates (0-64, Default: 6)",
+    )
     index_parser.add_argument(
         "--person-backend",
         default=None,
@@ -72,35 +99,140 @@ def _index_command(
     roots: list[Path],
     custom_db_path: str | None,
     person_backend: str | None,
+    force_reindex: bool = False,
+    index_workers: int = 1,
+    near_duplicates: bool = False,
+    phash_threshold: int = 6,
 ) -> int:
     db_path = config.resolve_db_path(custom_db_path)
     ensure_schema(db_path)
 
+    safe_workers = max(1, index_workers)
+    safe_threshold = max(0, min(64, phash_threshold))
+
+    def prepare_record(record):
+        labels = set(infer_labels_from_path(record.path))
+        person_matches = match_persons_for_photo(
+            db_path=db_path,
+            photo_path=record.path,
+            preferred_backend=person_backend,
+        )
+        if person_matches:
+            labels.add("person")
+            for person_match in person_matches:
+                labels.add(f"person:{person_match.person_name.lower()}")
+
+        return (
+            record,
+            sorted(labels),
+            person_matches,
+            sha1_of_file(record.path),
+            phash_of_file(record.path),
+        )
+
     total_images = 0
+    total_processed = 0
+    total_skipped = 0
+    total_duplicates = 0
     for root in roots:
         images = scan_images(root=root, supported_extensions=config.supported_extensions)
         if not images:
             print(f"Keine Bilder gefunden unter: {root}")
             continue
 
-        for record in tqdm(images, desc=f"Indexiere Fotos aus {root.name}", unit="Foto"):
-            labels = set(infer_labels_from_path(record.path))
-            person_matches = match_persons_for_photo(
+        existing_metadata = (
+            {}
+            if force_reindex
+            else get_photo_metadata_map(
                 db_path=db_path,
-                photo_path=record.path,
-                preferred_backend=person_backend,
+                paths=[record.path for record in images],
             )
-            if person_matches:
-                labels.add("person")
-                for person_match in person_matches:
-                    labels.add(f"person:{person_match.person_name.lower()}")
+        )
 
-            upsert_photo(db_path=db_path, record=record, labels=sorted(labels))
-            persist_matches_for_photo(db_path=db_path, photo_path=record.path, matches=person_matches)
+        to_process = []
+        for record in images:
+            previous_metadata = existing_metadata.get(str(record.path))
+            if previous_metadata is not None:
+                previous_size, previous_modified_ts = previous_metadata
+                if previous_size == record.size_bytes and previous_modified_ts == record.modified_ts:
+                    total_skipped += 1
+                    continue
+            to_process.append(record)
+
+        processed_for_root = 0
+        duplicates_for_root = 0
+
+        if safe_workers == 1:
+            iterator = (prepare_record(record) for record in to_process)
+            progress = tqdm(iterator, total=len(to_process), desc=f"Indexiere Fotos aus {root.name}", unit="Foto")
+            for record, labels, person_matches, sha1, phash in progress:
+                duplicate_of_path, duplicate_kind, duplicate_score = resolve_duplicate_marker(
+                    db_path=db_path,
+                    photo_path=record.path,
+                    sha1=sha1,
+                    phash=phash,
+                    near_duplicates=near_duplicates,
+                    phash_threshold=safe_threshold,
+                )
+                if duplicate_kind is not None:
+                    duplicates_for_root += 1
+
+                upsert_photo(
+                    db_path=db_path,
+                    record=record,
+                    labels=labels,
+                    sha1=sha1,
+                    phash=phash,
+                    duplicate_of_path=duplicate_of_path,
+                    duplicate_kind=duplicate_kind,
+                    duplicate_score=duplicate_score,
+                )
+                persist_matches_for_photo(db_path=db_path, photo_path=record.path, matches=person_matches)
+                processed_for_root += 1
+        else:
+            with ThreadPoolExecutor(max_workers=safe_workers) as executor:
+                futures = [executor.submit(prepare_record, record) for record in to_process]
+                progress = tqdm(
+                    as_completed(futures),
+                    total=len(futures),
+                    desc=f"Indexiere Fotos aus {root.name}",
+                    unit="Foto",
+                )
+                for future in progress:
+                    record, labels, person_matches, sha1, phash = future.result()
+                    duplicate_of_path, duplicate_kind, duplicate_score = resolve_duplicate_marker(
+                        db_path=db_path,
+                        photo_path=record.path,
+                        sha1=sha1,
+                        phash=phash,
+                        near_duplicates=near_duplicates,
+                        phash_threshold=safe_threshold,
+                    )
+                    if duplicate_kind is not None:
+                        duplicates_for_root += 1
+
+                    upsert_photo(
+                        db_path=db_path,
+                        record=record,
+                        labels=labels,
+                        sha1=sha1,
+                        phash=phash,
+                        duplicate_of_path=duplicate_of_path,
+                        duplicate_kind=duplicate_kind,
+                        duplicate_score=duplicate_score,
+                    )
+                    persist_matches_for_photo(db_path=db_path, photo_path=record.path, matches=person_matches)
+                    processed_for_root += 1
 
         total_images += len(images)
+        total_processed += processed_for_root
+        total_duplicates += duplicates_for_root
 
-    print(f"Index abgeschlossen: {total_images} Dateien in {db_path}")
+    print(
+        f"Index abgeschlossen: {total_images} Dateien gescannt, "
+        f"{total_processed} verarbeitet, {total_skipped} uebersprungen, "
+        f"{total_duplicates} als Duplikat markiert in {db_path}"
+    )
     return 0
 
 
@@ -208,6 +340,10 @@ def main() -> int:
             roots=[Path(r) for r in args.root],
             custom_db_path=args.db,
             person_backend=args.person_backend,
+            force_reindex=args.force_reindex,
+            index_workers=args.index_workers,
+            near_duplicates=args.near_duplicates,
+            phash_threshold=args.phash_threshold,
         )
     if args.command == "enroll":
         return _enroll_command(

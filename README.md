@@ -6,7 +6,9 @@ Dieses Projekt bietet ein lauffaehiges Grundgeruest fuer lokale Foto-Indexierung
 
 - rekursiver Foto-Scan eines oder mehrerer Ordner
 - inkrementelle Indexierung (Index kann schrittweise erweitert werden)
+- optionale Parallelisierung der Index-Vorverarbeitung (`--index-workers`)
 - SQLite-Index (`data/photo_index.db`)
+- Duplikat-Markierung (exakt via SHA1, optional nahe Duplikate via pHash)
 - YOLOv8 Labels fuer `person`, `animal`, `object`
 - Erkennung bestimmter Personen per Referenzbilder (`enroll`)
 - Textsuche ueber Dateiname, Pfad und Labels
@@ -57,6 +59,18 @@ Index mit mehreren Root-Pfaden erweitern (inkrementell):
 python src/main.py index --root "D:\MeineFotos" --root "D:\UrlaubsFotos"
 python src/main.py index --root "D:\Fotos2024" --root "D:\Fotos2025" --root "D:\Archiv"
 ```
+
+Schneller/gezielter indexieren:
+
+```powershell
+python src/main.py index --root "D:\MeineFotos" --index-workers 8
+python src/main.py index --root "D:\MeineFotos" --force-reindex
+python src/main.py index --root "D:\MeineFotos" --near-duplicates --phash-threshold 6
+```
+
+- Ohne `--force-reindex` werden unveraenderte Dateien (Groesse + mtime) uebersprungen.
+- `--index-workers` parallelisiert die Vorverarbeitung; DB-Schreiben bleibt stabil seriell.
+- Exakte Duplikate werden immer markiert, near duplicates nur mit `--near-duplicates`.
 
 Suchen:
 

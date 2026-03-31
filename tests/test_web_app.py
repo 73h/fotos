@@ -17,7 +17,7 @@ from src.app.web import create_app  # noqa: E402
 
 class WebAppTests(unittest.TestCase):
     def test_api_search_pagination_and_thumbnail_cache(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             workspace = Path(tmp_dir)
             db_path = workspace / "data" / "photo_index.db"
             cache_dir = workspace / "data" / "cache"

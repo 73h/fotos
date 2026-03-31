@@ -15,6 +15,12 @@
     </a>
     <div class="path">{{ item.path }}</div>
     <div class="labels">{{ item.labels|join(', ') if item.labels else '-' }}</div>
+    {% if item.duplicate_kind %}
+    <div class="labels">
+      Duplikat ({{ item.duplicate_kind }})
+      {% if item.duplicate_score is not none %}{{ '%.2f'|format(item.duplicate_score) }}{% endif %}
+    </div>
+    {% endif %}
   </article>
   {% endfor %}
 </div>
