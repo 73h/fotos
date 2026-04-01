@@ -1,4 +1,32 @@
 (() => {
+  // Hamburger Menu Toggle
+  function toggleMenu(event) {
+    event.stopPropagation();
+    const toggle = event.currentTarget;
+    const menu = document.getElementById("menu-dropdown");
+    const isOpen = menu.classList.contains("show");
+
+    if (isOpen) {
+      menu.classList.remove("show");
+      toggle.classList.remove("active");
+    } else {
+      menu.classList.add("show");
+      toggle.classList.add("active");
+    }
+  }
+
+  // Close menu when clicking outside
+  document.addEventListener("click", function(event) {
+    const menuContainer = document.querySelector(".menu-container");
+    const menu = document.getElementById("menu-dropdown");
+    const toggle = document.getElementById("menu-toggle");
+
+    if (menu && toggle && !menuContainer.contains(event.target)) {
+      menu.classList.remove("show");
+      toggle.classList.remove("active");
+    }
+  });
+
   function getSearchState() {
     const form = document.getElementById("search-form");
     const params = new URLSearchParams();
@@ -249,11 +277,40 @@
     document.getElementById("search-form").requestSubmit();
   }
 
+  function updateDateFilter() {
+    const monthSelect = document.getElementById("month-filter-select");
+    const yearInput = document.getElementById("year-filter-input");
+    const queryInput = document.querySelector("input[name='q']");
+
+    if (!queryInput) return;
+
+    let query = queryInput.value;
+
+    // Entferne alte month: und year: Filter
+    query = query.replace(/month:\d+|year:\d+/g, "").trim();
+
+    // Füge neue Filter hinzu wenn gesetzt
+    const month = monthSelect.value;
+    const year = yearInput.value;
+
+    if (month) {
+      query = query ? `${query} month:${month}` : `month:${month}`;
+    }
+
+    if (year) {
+      query = query ? `${query} year:${year}` : `year:${year}`;
+    }
+
+    queryInput.value = query;
+    document.getElementById("search-form").requestSubmit();
+  }
+
   // Export functions globally for inline onclick handlers
   window.renameAlbumPrompt = renameAlbumPrompt;
   window.deleteAlbumPrompt = deleteAlbumPrompt;
   window.removePhotoFromAlbum = removePhotoFromAlbum;
   window.filterByPerson = filterByPerson;
+  window.updateDateFilter = updateDateFilter;
 
   // Photo Modal functions
   async function openPhotoModal(photoToken) {
@@ -411,6 +468,7 @@
 
   window.openPhotoModal = openPhotoModal;
   window.closePhotoModal = closePhotoModal;
+  window.toggleMenu = toggleMenu;
 
   document.addEventListener("DOMContentLoaded", () => initAlbumDragDrop(document));
   document.body.addEventListener("htmx:afterSwap", () => initAlbumDragDrop(document));

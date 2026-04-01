@@ -368,6 +368,43 @@ def get_photo_metadata_map(
     return metadata_by_path
 
 
+def _parse_date_filters(query: str) -> tuple[list[str], dict[str, int | None]]:
+    """
+    Extrahiert Datumfilter (month:MM, year:YYYY) aus der Query.
+
+    Returns:
+        Tuple aus:
+        - Liste der verbleibenden Suchterme
+        - Dict mit 'month' und 'year' (oder None wenn nicht gesetzt)
+    """
+    terms = [term.strip().lower() for term in query.split() if term.strip()]
+
+    month_filter = None
+    year_filter = None
+    filtered_terms = []
+
+    for term in terms:
+        if term.startswith("month:"):
+            try:
+                m = int(term[6:])
+                if 1 <= m <= 12:
+                    month_filter = m
+                continue
+            except ValueError:
+                pass
+        elif term.startswith("year:"):
+            try:
+                y = int(term[5:])
+                if 1900 <= y <= 2100:
+                    year_filter = y
+                continue
+            except ValueError:
+                pass
+        filtered_terms.append(term)
+
+    return filtered_terms, {"month": month_filter, "year": year_filter}
+
+
 def search_photos_page(
     db_path: Path,
     query: str,
@@ -376,11 +413,46 @@ def search_photos_page(
     max_persons: int | None = None,
     album_id: int | None = None,
 ) -> tuple[list[IndexedPhoto], int]:
-    terms = [term.strip().lower() for term in query.split() if term.strip()]
-    if not terms and album_id is None:
+    import datetime
+
+    terms, date_filters = _parse_date_filters(query)
+
+    if not terms and album_id is None and not (date_filters["month"] or date_filters["year"]):
         return [], 0
 
     where_parts = ["search_blob LIKE ?" for _ in terms]
+
+    # Datumfilter hinzufügen
+    start_date = None
+    end_date = None
+    month_str = None
+
+    if date_filters["month"] is not None or date_filters["year"] is not None:
+        if date_filters["month"] is not None and date_filters["year"] is not None:
+            # Spezifischer Monat und Jahr
+            month_val: int = date_filters["month"]
+            year_val: int = date_filters["year"]
+            start_date = datetime.datetime(year_val, month_val, 1)
+            if month_val == 12:
+                end_date = datetime.datetime(year_val + 1, 1, 1)
+            else:
+                end_date = datetime.datetime(year_val, month_val + 1, 1)
+            where_parts.append("taken_ts >= ? AND taken_ts < ?")
+        elif date_filters["year"] is not None:
+            # Nur Jahr
+            year_val = date_filters["year"]
+            start_date = datetime.datetime(year_val, 1, 1)
+            end_date = datetime.datetime(year_val + 1, 1, 1)
+            where_parts.append("taken_ts >= ? AND taken_ts < ?")
+        else:
+            # Nur Monat - suche über alle Jahre
+            month_val = date_filters["month"]
+            month_str = f"{month_val:02d}"
+            where_parts.append(
+                "(strftime('%m', datetime(taken_ts, 'unixepoch')) = ? OR "
+                "(taken_ts IS NULL AND strftime('%m', datetime(modified_ts, 'unixepoch')) = ?))"
+            )
+
     if max_persons is not None:
         where_parts.append("person_count <= ?")
     if album_id is not None:
@@ -406,6 +478,15 @@ def search_photos_page(
     """
 
     base_params: list[object] = [f"%{term}%" for term in terms]
+
+    # Datumfilter-Parameter hinzufügen
+    if start_date is not None and end_date is not None:
+        base_params.append(start_date.timestamp())
+        base_params.append(end_date.timestamp())
+    elif month_str is not None:
+        base_params.append(month_str)
+        base_params.append(month_str)
+
     if max_persons is not None:
         base_params.append(max_persons)
     if album_id is not None:
