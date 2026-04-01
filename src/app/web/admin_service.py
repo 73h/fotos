@@ -48,10 +48,10 @@ class AdminService:
         job_id = f"index_{uuid.uuid4().hex[:8]}"
         job = self.job_manager.create_job(job_id, "full_index")
 
-        def _do_index():
+        def _do_index(progress_job):
             try:
                 self._execute_full_index(
-                    job=job,
+                    job=progress_job,
                     photo_roots=photo_roots,
                     person_backend=person_backend,
                     force_reindex=force_reindex,
@@ -70,9 +70,9 @@ class AdminService:
         job_id = f"exif_{uuid.uuid4().hex[:8]}"
         job = self.job_manager.create_job(job_id, "exif_update")
 
-        def _do_exif():
+        def _do_exif(progress_job):
             try:
-                self._execute_exif_update(job)
+                self._execute_exif_update(progress_job)
             except Exception as e:
                 raise Exception(f"EXIF-Update-Fehler: {str(e)}")
 
@@ -88,10 +88,10 @@ class AdminService:
         job_id = f"rematch_{uuid.uuid4().hex[:8]}"
         job = self.job_manager.create_job(job_id, "rematch_persons")
 
-        def _do_rematch():
+        def _do_rematch(progress_job):
             try:
                 self._execute_rematch_persons(
-                    job=job,
+                    job=progress_job,
                     person_backend=person_backend,
                     workers=workers,
                 )
