@@ -36,7 +36,8 @@ class PersonMatchingTests(unittest.TestCase):
                 )
                 self.assertEqual(backend_name, "histogram")
                 self.assertGreaterEqual(len(signatures), 1)
-                self.assertEqual(len(signatures[0]), 96)
+                self.assertEqual(len(signatures[0][0]), 96)
+                self.assertIsNone(signatures[0][1])
                 self.assertIsInstance(box_count, int)
         finally:
             service.yolo_labels.detect_person_boxes = original
@@ -48,4 +49,3 @@ class PersonMatchingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

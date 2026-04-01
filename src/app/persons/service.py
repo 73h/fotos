@@ -30,6 +30,7 @@ class PersonMatch:
     person_id: int
     person_name: str
     score: float
+    smile_score: float | None = None
 
 
 @dataclass(frozen=True)
@@ -43,14 +44,14 @@ class EnrollResult:
 def extract_person_signatures(
     photo_path: Path,
     preferred_backend: str | None = None,
-) -> tuple[str, list[list[float]], int]:
-    """Gibt (backend_name, signatures, person_box_count) zurück."""
+) -> tuple[str, list[tuple[list[float], float | None]], int]:
+    """Gibt (backend_name, signatures_mit_smile, person_box_count) zurück."""
     if not photo_path.exists():
         return ("unknown", [], 0)
 
     backend = resolve_backend(preferred_backend)
 
-    signatures: list[list[float]] = []
+    signatures: list[tuple[list[float], float | None]] = []
     try:
         with Image.open(photo_path) as image:
             boxes = yolo_labels.detect_person_boxes(photo_path)
@@ -59,12 +60,14 @@ def extract_person_signatures(
                 crop = image.crop((x1, y1, x2, y2))
                 vector = backend.vector_from_image(crop)
                 if vector is not None:
-                    signatures.append(vector)
+                    smile_score = backend.smile_score_from_image(crop)
+                    signatures.append((vector, smile_score))
 
             if not signatures and _USE_FULL_IMAGE_FALLBACK:
                 vector = backend.vector_from_image(image)
                 if vector is not None:
-                    signatures.append(vector)
+                    smile_score = backend.smile_score_from_image(image)
+                    signatures.append((vector, smile_score))
     except Exception:
         return (backend.name, [], 0)
 
@@ -83,6 +86,7 @@ def _group_references_by_person(
 def _score_signature_against_references(
     signature: list[float],
     references_by_person: dict[tuple[int, str], list[list[float]]],
+    smile_score: float | None = None,
 ) -> list[PersonMatch]:
     scored: list[PersonMatch] = []
     for (person_id, person_name), vectors in references_by_person.items():
@@ -91,7 +95,14 @@ def _score_signature_against_references(
 
         best_score = max(cosine_similarity(signature, reference) for reference in vectors)
         if best_score >= _PERSON_THRESHOLD:
-            scored.append(PersonMatch(person_id=person_id, person_name=person_name, score=best_score))
+            scored.append(
+                PersonMatch(
+                    person_id=person_id,
+                    person_name=person_name,
+                    score=best_score,
+                    smile_score=smile_score,
+                )
+            )
 
     scored.sort(key=lambda item: item.score, reverse=True)
     return scored[:_PERSON_TOP_K]
@@ -115,7 +126,7 @@ def enroll_person(
             preferred_backend=preferred_backend,
         )
         backend_name = used_backend_name
-        for signature in signatures:
+        for signature, _smile_score in signatures:
             source_vectors.append((str(image_record.path), signature))
 
     if not source_vectors:
@@ -161,8 +172,8 @@ def match_persons_for_photo(
     refs_by_person = _group_references_by_person(refs)
     best_by_person: dict[int, PersonMatch] = {}
 
-    for signature in signatures:
-        for match in _score_signature_against_references(signature, refs_by_person):
+    for signature, smile_score in signatures:
+        for match in _score_signature_against_references(signature, refs_by_person, smile_score=smile_score):
             current = best_by_person.get(match.person_id)
             if current is None or match.score > current.score:
                 best_by_person[match.person_id] = match
@@ -175,7 +186,7 @@ def persist_matches_for_photo(db_path: Path, photo_path: Path, matches: list[Per
     replace_photo_person_matches(
         db_path=db_path,
         photo_path=str(photo_path),
-        matches=[(match.person_id, match.score) for match in matches],
+        matches=[(match.person_id, match.score, match.smile_score) for match in matches],
     )
 
 

@@ -16,6 +16,7 @@ from ..albums.store import (
     rename_album,
     set_album_cover,
 )
+from ..index.store import parse_search_filters
 from ..persons import list_persons
 from ..search.query import run_search_page
 
@@ -42,9 +43,54 @@ def _build_photo_filter_clause(
     max_persons: int | None = None,
     album_id: int | None = None,
 ) -> tuple[str, list[object]]:
-    terms = [term.strip().lower() for term in query.split() if term.strip()]
+    terms, filters = parse_search_filters(query)
     where_parts = ["search_blob LIKE ?" for _ in terms]
     params: list[object] = [f"%{term}%" for term in terms]
+
+    person_filter = filters["person"]
+    smile_min = filters["smile_min"]
+
+    if person_filter is not None and smile_min is not None:
+        where_parts.append(
+            """
+            EXISTS (
+                SELECT 1
+                FROM photo_person_matches m
+                JOIN persons p ON p.id = m.person_id
+                WHERE m.photo_path = photos.path
+                  AND lower(p.name) = lower(?)
+                  AND m.smile_score IS NOT NULL
+                  AND m.smile_score >= ?
+            )
+            """
+        )
+        params.extend([person_filter, smile_min])
+    elif person_filter is not None:
+        where_parts.append(
+            """
+            EXISTS (
+                SELECT 1
+                FROM photo_person_matches m
+                JOIN persons p ON p.id = m.person_id
+                WHERE m.photo_path = photos.path
+                  AND lower(p.name) = lower(?)
+            )
+            """
+        )
+        params.append(person_filter)
+    elif smile_min is not None:
+        where_parts.append(
+            """
+            EXISTS (
+                SELECT 1
+                FROM photo_person_matches m
+                WHERE m.photo_path = photos.path
+                  AND m.smile_score IS NOT NULL
+                  AND m.smile_score >= ?
+            )
+            """
+        )
+        params.append(smile_min)
 
     if max_persons is not None:
         where_parts.append("person_count <= ?")

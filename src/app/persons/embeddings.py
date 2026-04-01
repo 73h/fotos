@@ -4,6 +4,7 @@ from contextlib import redirect_stderr, redirect_stdout
 import logging
 import os
 from threading import Lock
+from typing import Any, cast
 
 import numpy as np
 from PIL import Image
@@ -30,6 +31,9 @@ class EmbeddingBackend:
     def vector_from_image(self, image: Image.Image) -> list[float] | None:
         raise NotImplementedError
 
+    def smile_score_from_image(self, image: Image.Image) -> float | None:
+        return None
+
 
 class HistogramBackend(EmbeddingBackend):
     def __init__(self) -> None:
@@ -52,7 +56,7 @@ class HistogramBackend(EmbeddingBackend):
 
 
 class InsightFaceBackend(EmbeddingBackend):
-    _app: object
+    _app: Any
 
     def __init__(self) -> None:
         _configure_inference_logging()
@@ -74,18 +78,46 @@ class InsightFaceBackend(EmbeddingBackend):
         setattr(self, "_app", app)
         super().__init__(name="insightface", vector_dim=512)
 
-    def vector_from_image(self, image: Image.Image) -> list[float] | None:
+    def _get_primary_face(self, image: Image.Image):
         rgb = np.asarray(image.convert("RGB"), dtype=np.uint8)
         bgr = rgb[:, :, ::-1]
-        faces = self._app.get(bgr)
+        app = cast(Any, self._app)
+        faces = app.get(bgr)
         if not faces:
             return None
+        return faces[0]
 
-        embedding = np.asarray(faces[0].embedding, dtype=np.float32)
+    def vector_from_image(self, image: Image.Image) -> list[float] | None:
+        face = self._get_primary_face(image)
+        if face is None:
+            return None
+
+        embedding = np.asarray(face.embedding, dtype=np.float32)
         embedding = _normalize_vector(embedding)
         if embedding.shape[0] != self.vector_dim:
             return None
         return embedding.tolist()
+
+    def smile_score_from_image(self, image: Image.Image) -> float | None:
+        face = self._get_primary_face(image)
+        if face is None:
+            return None
+
+        keypoints = np.asarray(getattr(face, "kps", None), dtype=np.float32)
+        if keypoints.shape != (5, 2):
+            return None
+
+        left_eye, right_eye = keypoints[0], keypoints[1]
+        left_mouth, right_mouth = keypoints[3], keypoints[4]
+
+        eye_distance = float(np.linalg.norm(right_eye - left_eye))
+        mouth_distance = float(np.linalg.norm(right_mouth - left_mouth))
+        if eye_distance <= 1e-6:
+            return None
+
+        ratio = mouth_distance / eye_distance
+        normalized = (ratio - 0.45) / 0.30
+        return float(max(0.0, min(1.0, normalized)))
 
 
 def _configure_inference_logging() -> None:
@@ -151,5 +183,3 @@ def resolve_backend(preferred_backend: str | None = None) -> EmbeddingBackend:
         context_id=os.getenv("FOTOS_INSIGHTFACE_CTX", "0"),
         det_size=os.getenv("FOTOS_INSIGHTFACE_DET_SIZE", "640,640"),
     )
-
-

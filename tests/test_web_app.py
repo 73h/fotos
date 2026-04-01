@@ -180,6 +180,76 @@ class WebAppTests(unittest.TestCase):
             assert reverse_payload is not None
             self.assertEqual(reverse_payload["result"]["display_name"], "Marienplatz")
 
+    def test_api_search_supports_person_and_smile_filters(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            workspace = Path(tmp_dir)
+            db_path = workspace / "data" / "photo_index.db"
+            cache_dir = workspace / "data" / "cache"
+            photos_dir = workspace / "photos"
+            photos_dir.mkdir(parents=True, exist_ok=True)
+            ensure_schema(db_path)
+
+            image_a = photos_dir / "person_smile_high.jpg"
+            image_b = photos_dir / "person_smile_low.jpg"
+            Image.new("RGB", (200, 120), color=(100, 120, 180)).save(image_a)
+            Image.new("RGB", (200, 120), color=(110, 120, 170)).save(image_b)
+
+            for image_path in (image_a, image_b):
+                stat = image_path.stat()
+                record = ImageRecord(
+                    path=image_path,
+                    size_bytes=stat.st_size,
+                    modified_ts=stat.st_mtime,
+                )
+                upsert_photo(
+                    db_path=db_path,
+                    record=record,
+                    labels=["urlaub"],
+                    person_count=1,
+                )
+
+            with sqlite3.connect(db_path) as conn:
+                conn.execute("INSERT INTO persons (name) VALUES (?)", ("Marie Curie",))
+                person_id = int(conn.execute("SELECT id FROM persons WHERE name = ?", ("Marie Curie",)).fetchone()[0])
+                conn.execute(
+                    """
+                    INSERT INTO photo_person_matches (photo_path, person_id, score, smile_score, matched_ts)
+                    VALUES (?, ?, ?, ?, strftime('%s','now'))
+                    """,
+                    (str(image_a), person_id, 0.92, 0.85),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO photo_person_matches (photo_path, person_id, score, smile_score, matched_ts)
+                    VALUES (?, ?, ?, ?, strftime('%s','now'))
+                    """,
+                    (str(image_b), person_id, 0.88, 0.20),
+                )
+
+            app = create_app(
+                app_config=AppConfig.from_workspace(workspace_root=workspace),
+                custom_db_path=str(db_path),
+                custom_cache_dir=str(cache_dir),
+            )
+            client = app.test_client()
+
+            response = client.get('/api/search?q=person:"Marie Curie" smile:0.7')
+            self.assertEqual(response.status_code, 200)
+            payload = response.get_json()
+            assert payload is not None
+            self.assertEqual(payload["total"], 1)
+            self.assertEqual(len(payload["items"]), 1)
+            self.assertIn("person_smile_high.jpg", payload["items"][0]["path"])
+
+            response_person_only = client.get('/api/search?q=person:"Marie Curie"')
+            self.assertEqual(response_person_only.status_code, 200)
+            payload_person_only = response_person_only.get_json()
+            assert payload_person_only is not None
+            self.assertEqual(payload_person_only["total"], 2)
+            self.assertEqual(len(payload_person_only["items"]), 2)
+            found_paths = {Path(item["path"]).name for item in payload_person_only["items"]}
+            self.assertEqual(found_paths, {"person_smile_high.jpg", "person_smile_low.jpg"})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,9 +1,11 @@
 import hashlib
 import json
 import sqlite3
+import shlex
 from fractions import Fraction
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypedDict
 
 from PIL import Image
 
@@ -85,6 +87,7 @@ def ensure_schema(db_path: Path) -> None:
                 photo_path TEXT NOT NULL,
                 person_id INTEGER NOT NULL,
                 score REAL NOT NULL,
+                smile_score REAL,
                 matched_ts REAL NOT NULL,
                 PRIMARY KEY(photo_path, person_id),
                 FOREIGN KEY(person_id) REFERENCES persons(id)
@@ -157,6 +160,12 @@ def ensure_schema(db_path: Path) -> None:
             conn.execute("ALTER TABLE photos ADD COLUMN exif_json TEXT")
         if "exif_checked" not in existing_photo_columns:
             conn.execute("ALTER TABLE photos ADD COLUMN exif_checked INTEGER NOT NULL DEFAULT 0")
+
+        existing_person_match_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(photo_person_matches)").fetchall()
+        }
+        if "smile_score" not in existing_person_match_columns:
+            conn.execute("ALTER TABLE photo_person_matches ADD COLUMN smile_score REAL")
 
         conn.execute(
             """
@@ -368,41 +377,94 @@ def get_photo_metadata_map(
     return metadata_by_path
 
 
-def _parse_date_filters(query: str) -> tuple[list[str], dict[str, int | None]]:
+def _safe_split_query(query: str) -> list[str]:
+    try:
+        return shlex.split(query)
+    except ValueError:
+        return query.split()
+
+
+class SearchFilterDict(TypedDict):
+    month: int | None
+    year: int | None
+    person: str | None
+    smile_min: float | None
+
+
+def parse_search_filters(query: str) -> tuple[list[str], SearchFilterDict]:
     """
-    Extrahiert Datumfilter (month:MM, year:YYYY) aus der Query.
+    Extrahiert bekannte Filter aus der Query.
 
-    Returns:
-        Tuple aus:
-        - Liste der verbleibenden Suchterme
-        - Dict mit 'month' und 'year' (oder None wenn nicht gesetzt)
+    Unterstuetzte Filter:
+    - month:MM
+    - year:YYYY
+    - person:<name> (auch person:"Vorname Nachname")
+    - smile:<threshold> (0..1 oder 0..100)
     """
-    terms = [term.strip().lower() for term in query.split() if term.strip()]
+    tokens = [term.strip() for term in _safe_split_query(query) if term.strip()]
 
-    month_filter = None
-    year_filter = None
-    filtered_terms = []
+    month_filter: int | None = None
+    year_filter: int | None = None
+    person_filter: str | None = None
+    smile_min: float | None = None
+    filtered_terms: list[str] = []
 
-    for term in terms:
+    for token in tokens:
+        term = token.lower()
+
         if term.startswith("month:"):
             try:
-                m = int(term[6:])
-                if 1 <= m <= 12:
-                    month_filter = m
+                month_val = int(term[6:])
+                if 1 <= month_val <= 12:
+                    month_filter = month_val
                 continue
             except ValueError:
                 pass
-        elif term.startswith("year:"):
+
+        if term.startswith("year:"):
             try:
-                y = int(term[5:])
-                if 1900 <= y <= 2100:
-                    year_filter = y
+                year_val = int(term[5:])
+                if 1900 <= year_val <= 2100:
+                    year_filter = year_val
                 continue
             except ValueError:
                 pass
+
+        if term.startswith("person:"):
+            person_value = token[7:].strip()
+            if person_value:
+                person_filter = person_value
+                continue
+
+        if term.startswith("smile:"):
+            raw = term[6:].strip()
+            if raw.endswith("%"):
+                raw = raw[:-1]
+            try:
+                smile_val = float(raw)
+                if smile_val > 1.0:
+                    smile_val = smile_val / 100.0
+                smile_min = max(0.0, min(1.0, smile_val))
+                continue
+            except ValueError:
+                pass
+
         filtered_terms.append(term)
 
-    return filtered_terms, {"month": month_filter, "year": year_filter}
+    return filtered_terms, {
+        "month": month_filter,
+        "year": year_filter,
+        "person": person_filter,
+        "smile_min": smile_min,
+    }
+
+
+def _parse_date_filters(query: str) -> tuple[list[str], dict[str, object]]:
+    terms, filters = parse_search_filters(query)
+    return terms, {
+        "month": filters["month"],
+        "year": filters["year"],
+    }
 
 
 def search_photos_page(
@@ -415,9 +477,13 @@ def search_photos_page(
 ) -> tuple[list[IndexedPhoto], int]:
     import datetime
 
-    terms, date_filters = _parse_date_filters(query)
+    terms, filters = parse_search_filters(query)
+    month_filter = filters["month"]
+    year_filter = filters["year"]
+    person_filter = filters["person"]
+    smile_min = filters["smile_min"]
 
-    if not terms and album_id is None and not (date_filters["month"] or date_filters["year"]):
+    if not terms and album_id is None and not (month_filter or year_filter) and not person_filter and smile_min is None:
         return [], 0
 
     where_parts = ["search_blob LIKE ?" for _ in terms]
@@ -427,31 +493,66 @@ def search_photos_page(
     end_date = None
     month_str = None
 
-    if date_filters["month"] is not None or date_filters["year"] is not None:
-        if date_filters["month"] is not None and date_filters["year"] is not None:
+    if month_filter is not None or year_filter is not None:
+        if month_filter is not None and year_filter is not None:
             # Spezifischer Monat und Jahr
-            month_val: int = date_filters["month"]
-            year_val: int = date_filters["year"]
-            start_date = datetime.datetime(year_val, month_val, 1)
-            if month_val == 12:
-                end_date = datetime.datetime(year_val + 1, 1, 1)
+            start_date = datetime.datetime(year_filter, month_filter, 1)
+            if month_filter == 12:
+                end_date = datetime.datetime(year_filter + 1, 1, 1)
             else:
-                end_date = datetime.datetime(year_val, month_val + 1, 1)
+                end_date = datetime.datetime(year_filter, month_filter + 1, 1)
             where_parts.append("taken_ts >= ? AND taken_ts < ?")
-        elif date_filters["year"] is not None:
+        elif year_filter is not None:
             # Nur Jahr
-            year_val = date_filters["year"]
-            start_date = datetime.datetime(year_val, 1, 1)
-            end_date = datetime.datetime(year_val + 1, 1, 1)
+            start_date = datetime.datetime(year_filter, 1, 1)
+            end_date = datetime.datetime(year_filter + 1, 1, 1)
             where_parts.append("taken_ts >= ? AND taken_ts < ?")
         else:
             # Nur Monat - suche über alle Jahre
-            month_val = date_filters["month"]
-            month_str = f"{month_val:02d}"
+            month_str = f"{month_filter:02d}"
             where_parts.append(
                 "(strftime('%m', datetime(taken_ts, 'unixepoch')) = ? OR "
                 "(taken_ts IS NULL AND strftime('%m', datetime(modified_ts, 'unixepoch')) = ?))"
             )
+
+    if person_filter is not None and smile_min is not None:
+        where_parts.append(
+            """
+            EXISTS (
+                SELECT 1
+                FROM photo_person_matches m
+                JOIN persons p ON p.id = m.person_id
+                WHERE m.photo_path = photos.path
+                  AND lower(p.name) = lower(?)
+                  AND m.smile_score IS NOT NULL
+                  AND m.smile_score >= ?
+            )
+            """
+        )
+    elif person_filter is not None:
+        where_parts.append(
+            """
+            EXISTS (
+                SELECT 1
+                FROM photo_person_matches m
+                JOIN persons p ON p.id = m.person_id
+                WHERE m.photo_path = photos.path
+                  AND lower(p.name) = lower(?)
+            )
+            """
+        )
+    elif smile_min is not None:
+        where_parts.append(
+            """
+            EXISTS (
+                SELECT 1
+                FROM photo_person_matches m
+                WHERE m.photo_path = photos.path
+                  AND m.smile_score IS NOT NULL
+                  AND m.smile_score >= ?
+            )
+            """
+        )
 
     if max_persons is not None:
         where_parts.append("person_count <= ?")
@@ -486,6 +587,14 @@ def search_photos_page(
     elif month_str is not None:
         base_params.append(month_str)
         base_params.append(month_str)
+
+    if person_filter is not None and smile_min is not None:
+        base_params.append(person_filter)
+        base_params.append(smile_min)
+    elif person_filter is not None:
+        base_params.append(person_filter)
+    elif smile_min is not None:
+        base_params.append(smile_min)
 
     if max_persons is not None:
         base_params.append(max_persons)

@@ -102,6 +102,24 @@ def _build_parser() -> argparse.ArgumentParser:
     exif_parser = subparsers.add_parser("update-exif", help="EXIF-Daten schnell aktualisieren (ohne Neu-Indexierung)")
     exif_parser.add_argument("--db", default=None, help="Pfad zur SQLite-DB")
 
+    rematch_parser = subparsers.add_parser(
+        "rematch-persons",
+        help="Personen-Matching (inkl. Smile-Score) fuer alle indizierten Fotos neu berechnen",
+    )
+    rematch_parser.add_argument("--db", default=None, help="Pfad zur SQLite-DB")
+    rematch_parser.add_argument(
+        "--person-backend",
+        default=None,
+        choices=["auto", "insightface", "histogram"],
+        help="Embedding-Backend fuer Personenmatching",
+    )
+    rematch_parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Anzahl paralleler Worker (Default: 1)",
+    )
+
     return parser
 
 
@@ -348,6 +366,75 @@ def _web_command(
     return 0
 
 
+def _rematch_persons_command(
+    config: AppConfig,
+    custom_db_path: str | None,
+    person_backend: str | None,
+    workers: int = 1,
+) -> int:
+    """
+    Berechnet Personen-Matching und Smile-Score fuer alle bereits indizierten Fotos neu.
+    Viel schneller als ein vollstaendiger Re-Index, da SHA1/pHash/Labels/EXIF uebersprungen werden.
+    """
+    import sqlite3
+
+    db_path = config.resolve_db_path(custom_db_path)
+    if not db_path.exists():
+        print(f"Index nicht gefunden: {db_path}")
+        return 1
+
+    ensure_schema(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute("SELECT path FROM photos ORDER BY path").fetchall()
+
+    photo_paths = [Path(row[0]) for row in rows]
+    existing = [p for p in photo_paths if p.exists()]
+    missing = len(photo_paths) - len(existing)
+
+    if not existing:
+        print("Keine indizierten Fotos gefunden.")
+        return 0
+
+    print(f"Berechne Smile-Scores fuer {len(existing)} Fotos"
+          + (f" ({missing} nicht mehr vorhanden, werden uebersprungen)" if missing else "") + " …")
+
+    safe_workers = max(1, workers)
+
+    def _process(photo_path: Path) -> tuple[Path, list, int]:
+        matches, person_count = match_persons_for_photo(
+            db_path=db_path,
+            photo_path=photo_path,
+            preferred_backend=person_backend,
+        )
+        return photo_path, matches, person_count
+
+    processed = 0
+    matched = 0
+
+    if safe_workers == 1:
+        progress = tqdm(existing, desc="Rematch", unit="Foto")
+        for photo_path in progress:
+            _, matches, _ = _process(photo_path)
+            persist_matches_for_photo(db_path=db_path, photo_path=photo_path, matches=matches)
+            processed += 1
+            if matches:
+                matched += 1
+    else:
+        with ThreadPoolExecutor(max_workers=safe_workers) as executor:
+            futures = [executor.submit(_process, p) for p in existing]
+            progress = tqdm(as_completed(futures), total=len(futures), desc="Rematch", unit="Foto")
+            for future in progress:
+                photo_path, matches, _ = future.result()
+                persist_matches_for_photo(db_path=db_path, photo_path=photo_path, matches=matches)
+                processed += 1
+                if matches:
+                    matched += 1
+
+    print(f"✓ {processed} Fotos verarbeitet, {matched} mit Personen-Treffer.")
+    return 0
+
+
 def _update_exif_command(
     config: AppConfig,
     custom_db_path: str | None,
@@ -423,6 +510,13 @@ def main() -> int:
         return _update_exif_command(
             config=config,
             custom_db_path=args.db,
+        )
+    if args.command == "rematch-persons":
+        return _rematch_persons_command(
+            config=config,
+            custom_db_path=args.db,
+            person_backend=args.person_backend,
+            workers=args.workers,
         )
 
     parser.print_help()

@@ -113,17 +113,17 @@ def list_person_references(
 def replace_photo_person_matches(
     db_path: Path,
     photo_path: str,
-    matches: list[tuple[int, float]],
+    matches: list[tuple[int, float, float | None]],
 ) -> None:
     now_ts = time.time()
     with sqlite3.connect(db_path) as conn:
         conn.execute("DELETE FROM photo_person_matches WHERE photo_path = ?", (photo_path,))
         conn.executemany(
             """
-            INSERT INTO photo_person_matches (photo_path, person_id, score, matched_ts)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO photo_person_matches (photo_path, person_id, score, smile_score, matched_ts)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            [(photo_path, person_id, score, now_ts) for person_id, score in matches],
+            [(photo_path, person_id, score, smile_score, now_ts) for person_id, score, smile_score in matches],
         )
 
 
