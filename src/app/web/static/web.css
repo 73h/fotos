@@ -289,27 +289,6 @@ body {
   font-size: 12px;
 }
 
-.filter-solo {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  cursor: pointer;
-  white-space: nowrap;
-  font-size: 14px;
-  color: var(--color-text-light);
-  padding: 6px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--color-orange);
-  background: var(--color-black-light);
-  user-select: none;
-}
-
-.filter-solo input[type="checkbox"] {
-  accent-color: var(--color-orange);
-  width: 16px;
-  height: 16px;
-  cursor: pointer;
-}
 
 .loading {
   opacity: 0;
@@ -329,47 +308,105 @@ body {
 
 .album-box-wrapper .album-box {
   flex: 1;
-  border-radius: 10px 0 0 10px;
+   border-radius: 10px 0 0 10px;
   margin: 0;
 }
 
-.album-box-wrapper .album-actions {
-  display: flex;
-  gap: 0;
+.album-actions-menu {
+  position: relative;
   background: var(--color-black-dark);
   border: 1px solid var(--color-orange);
   border-left: none;
   border-radius: 0 10px 10px 0;
   padding: 0;
-  transition: background 0.15s ease;
+  display: flex;
+  align-items: stretch;
 }
 
-.album-box-wrapper:hover .album-actions {
+.album-box-wrapper:hover .album-actions-menu {
   background: var(--color-black-light);
 }
 
-.album-action-btn {
+.album-menu-toggle {
   padding: 8px 10px;
   border: none;
   background: transparent;
   color: var(--color-orange-light);
   cursor: pointer;
-  font-size: 14px;
-  transition: color 0.15s ease;
-  border-right: 1px solid var(--color-orange);
+  font-size: 18px;
+  min-width: 40px;
+  transition: color 0.15s ease, background 0.15s ease;
+  border-radius: 0 8px 8px 0;
+}
+
+.album-menu-toggle:hover,
+.album-menu-toggle[aria-expanded="true"] {
+  color: var(--color-text-light);
+  background: var(--color-black-light);
+}
+
+.album-actions-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 150px;
+  display: none;
+  flex-direction: column;
+  background: #111820;
+  border: 1px solid var(--color-orange);
+  border-radius: 10px;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  z-index: 30;
+}
+
+.album-actions-dropdown.show {
+  display: flex;
+}
+
+.album-action-btn {
+  padding: 10px 12px;
+  border: none;
+  border-bottom: 1px solid rgba(255, 149, 0, 0.18);
+  background: transparent;
+  color: var(--color-text-light);
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .album-action-btn:last-child {
-  border-right: none;
-  border-radius: 0 8px 8px 0;
+  border-bottom: none;
 }
 
 .album-action-btn:hover {
   color: var(--color-text-light);
+  background: rgba(255, 149, 0, 0.12);
 }
 
 .album-action-btn.delete:hover {
   color: #ff6b6b;
+}
+
+.search-reset-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--color-orange);
+  background: var(--color-black-light);
+  color: var(--color-text-light);
+  text-decoration: none;
+  font-weight: 600;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.search-reset-link:hover {
+  background: var(--color-orange-dark);
+  border-color: var(--color-orange-light);
+  color: var(--color-text-light);
 }
 
 .photo-checkbox {
@@ -458,6 +495,26 @@ body {
   padding: 10px;
 }
 
+.album-export-panel {
+  margin-top: 12px;
+  border: 1px solid var(--color-orange-light);
+  background: rgba(255, 149, 0, 0.12);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.album-export-panel h3 {
+  margin: 0 0 6px;
+  color: var(--color-orange-light);
+  font-size: 15px;
+}
+
+.album-export-panel p {
+  margin: 0 0 10px;
+  color: var(--color-gray-light);
+  font-size: 12px;
+}
+
 .timelapse-panel h3 {
   margin: 0 0 6px;
   color: var(--color-blue-light);
@@ -471,7 +528,8 @@ body {
 }
 
 .timelapse-form-row input,
-.timelapse-form-grid input {
+.timelapse-form-grid input,
+.timelapse-form-grid select {
   width: 100%;
   box-sizing: border-box;
   padding: 7px 8px;
@@ -513,7 +571,22 @@ body {
   font-weight: 600;
 }
 
+#album-export-start-btn {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--color-orange-light);
+  background: var(--color-orange);
+  color: var(--color-text-dark);
+  cursor: pointer;
+  font-weight: 600;
+}
+
 #timelapse-start-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+#album-export-start-btn:disabled {
   opacity: 0.6;
   cursor: wait;
 }

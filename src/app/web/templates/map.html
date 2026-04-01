@@ -264,8 +264,11 @@
                     <span></span>
                 </button>
                 <nav id="menu-dropdown" class="menu-dropdown">
-                    <a href="{{ url_for('web.home') }}" class="menu-item">
+                    <a href="{{ url_for('web.home', q=query, album_id=active_album_id, person_count=person_count) }}" class="menu-item">
                         🔍 Zur Suche
+                    </a>
+                    <a href="{{ url_for('web.admin_page') }}" class="menu-item">
+                        🔧 Admin-Dashboard
                     </a>
                 </nav>
             </div>
@@ -307,7 +310,7 @@
         const initialFilters = {
             q: {{ query|tojson }},
             album_id: {{ active_album_id|tojson }},
-            max_persons: {{ max_persons|tojson }},
+            person_count: {{ person_count|tojson }},
         };
 
         function toggleMenu(event) {
@@ -364,8 +367,8 @@
             if (initialFilters.album_id) {
                 url.searchParams.set("album_id", initialFilters.album_id);
             }
-            if (initialFilters.max_persons) {
-                url.searchParams.set("max_persons", initialFilters.max_persons);
+            if (initialFilters.person_count) {
+                url.searchParams.set("person_count", initialFilters.person_count);
             }
             return url.toString();
         }
@@ -417,8 +420,8 @@
             if (initialFilters.album_id) {
                 parts.push(`Album-ID: ${initialFilters.album_id}`);
             }
-            if (initialFilters.max_persons) {
-                parts.push(`max. Personen: ${initialFilters.max_persons}`);
+            if (initialFilters.person_count) {
+                parts.push(`Personenzahl: ${initialFilters.person_count}`);
             }
             document.getElementById("activeFilterSummary").textContent = parts.length ? parts.join(" · ") : "alle GPS-Fotos";
         }

@@ -2,6 +2,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -10,6 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.app.persons import service  # noqa: E402
+from src.app.persons import embeddings  # noqa: E402
 from src.app.persons.embeddings import resolve_backend  # noqa: E402
 
 
@@ -45,6 +47,12 @@ class PersonMatchingTests(unittest.TestCase):
     def test_auto_backend_resolves_to_valid_backend(self) -> None:
         backend = resolve_backend("auto")
         self.assertIn(backend.name, {"histogram", "insightface"})
+
+    def test_strict_insightface_backend_raises_without_fallback(self) -> None:
+        embeddings._BACKEND_CACHE.clear()
+        with patch("src.app.persons.embeddings.InsightFaceBackend", side_effect=RuntimeError("missing insightface")):
+            with self.assertRaises(RuntimeError):
+                resolve_backend("insightface", strict=True)
 
 
 if __name__ == "__main__":

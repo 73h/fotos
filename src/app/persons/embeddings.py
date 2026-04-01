@@ -138,7 +138,7 @@ def _run_quietly(factory):
             return factory()
 
 
-_BACKEND_CACHE: dict[tuple[str, str, str, str], EmbeddingBackend] = {}
+_BACKEND_CACHE: dict[tuple[str, str, str, str, str], EmbeddingBackend] = {}
 _BACKEND_CACHE_LOCK = Lock()
 
 
@@ -147,8 +147,9 @@ def _resolve_backend_cached(
     model_name: str,
     context_id: str,
     det_size: str,
+    strict: bool,
 ) -> EmbeddingBackend:
-    cache_key = (backend_name, model_name, context_id, det_size)
+    cache_key = (backend_name, model_name, context_id, det_size, "strict" if strict else "fallback")
     with _BACKEND_CACHE_LOCK:
         cached = _BACKEND_CACHE.get(cache_key)
         if cached is not None:
@@ -160,11 +161,15 @@ def _resolve_backend_cached(
             try:
                 backend = InsightFaceBackend()
             except Exception:
+                if strict:
+                    raise
                 backend = HistogramBackend()
         elif backend_name == "auto":
             try:
                 backend = InsightFaceBackend()
             except Exception:
+                if strict:
+                    raise
                 backend = HistogramBackend()
         else:
             raise ValueError(
@@ -175,11 +180,12 @@ def _resolve_backend_cached(
         return backend
 
 
-def resolve_backend(preferred_backend: str | None = None) -> EmbeddingBackend:
+def resolve_backend(preferred_backend: str | None = None, strict: bool = False) -> EmbeddingBackend:
     backend_name = (preferred_backend or os.getenv("FOTOS_PERSON_BACKEND", "auto")).strip().lower()
     return _resolve_backend_cached(
         backend_name=backend_name,
         model_name=os.getenv("FOTOS_INSIGHTFACE_MODEL", "buffalo_l"),
         context_id=os.getenv("FOTOS_INSIGHTFACE_CTX", "0"),
         det_size=os.getenv("FOTOS_INSIGHTFACE_DET_SIZE", "640,640"),
+        strict=strict,
     )

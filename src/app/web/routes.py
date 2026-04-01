@@ -4,22 +4,29 @@ import json
 import math
 import re
 import threading
+import uuid
 from pathlib import Path
 from urllib.parse import quote_plus
 from urllib.request import Request, urlopen
 
 from flask import Blueprint, abort, current_app, jsonify, render_template, request, send_file
 
+from ..config import AppConfig
 from ..albums.store import add_photo_to_album, create_album, get_album, list_albums
 from ..albums.store import (
     add_photos_to_album_batch,
     delete_album,
+    duplicate_album,
+    list_album_photo_paths,
+    parse_reference_album_name,
     remove_photo_from_album,
     rename_album,
     set_album_cover,
 )
-from ..index.store import parse_search_filters
+from ..albums.export import export_album_zip, parse_ratio
+from ..index.store import ensure_schema, get_admin_config, parse_search_filters, save_admin_config
 from ..persons import list_persons
+from ..persons.service import enroll_person_from_paths
 from ..search.query import run_search_page
 
 from .thumbnails import ensure_thumbnail
@@ -54,7 +61,7 @@ def _decode_path(token: str) -> Path:
 
 def _build_photo_filter_clause(
     query: str,
-    max_persons: int | None = None,
+    person_count: int | None = None,
     album_id: int | None = None,
 ) -> tuple[str, list[object]]:
     terms, filters = parse_search_filters(query)
@@ -106,9 +113,9 @@ def _build_photo_filter_clause(
         )
         params.append(smile_min)
 
-    if max_persons is not None:
-        where_parts.append("person_count <= ?")
-        params.append(max_persons)
+    if person_count is not None:
+        where_parts.append("person_count = ?")
+        params.append(person_count)
     if album_id is not None:
         where_parts.append(
             "EXISTS (SELECT 1 FROM album_photos ap WHERE ap.photo_path = photos.path AND ap.album_id = ?)"
@@ -187,7 +194,7 @@ def _reverse_geocode_cached(latitude: float, longitude: float) -> dict[str, obje
 def _build_album_payload(
     query: str,
     per_page: int,
-    max_persons: int | None = None,
+    person_count: int | None = None,
     album_id: int | None = None,
 ) -> dict[str, object]:
     db_path: Path = current_app.config["DB_PATH"]
@@ -201,6 +208,8 @@ def _build_album_payload(
                 "name": album.name,
                 "photo_count": album.photo_count,
                 "active": album.id == album_id,
+                "reference_person_name": parse_reference_album_name(album.name),
+                "is_reference": parse_reference_album_name(album.name) is not None,
             }
             for album in albums
         ],
@@ -208,7 +217,7 @@ def _build_album_payload(
         "active_album_name": active_album.name if active_album is not None else None,
         "query": query,
         "per_page": per_page,
-        "max_persons": max_persons,
+        "person_count": person_count,
         "persons": [
             {
                 "id": person.id,
@@ -224,7 +233,7 @@ def _build_page_payload(
     query: str,
     page: int,
     per_page: int,
-    max_persons: int | None = None,
+    person_count: int | None = None,
     album_id: int | None = None,
 ) -> dict[str, object]:
     db_path: Path = current_app.config["DB_PATH"]
@@ -248,7 +257,7 @@ def _build_page_payload(
 
     active_album = get_album(db_path=db_path, album_id=album_id) if album_id is not None else None
 
-    if not query.strip() and album_id is None:
+    if not query.strip() and album_id is None and person_count is None:
         return {
             "items": [],
             "query": "",
@@ -271,7 +280,7 @@ def _build_page_payload(
         query=query,
         limit=safe_per_page,
         offset=offset,
-        max_persons=max_persons,
+        person_count=person_count,
         album_id=album_id,
     )
     pages = math.ceil(total / safe_per_page) if total else 0
@@ -307,11 +316,25 @@ def _build_page_payload(
         "pages": pages,
         "has_prev": safe_page > 1,
         "has_next": safe_page < pages,
-        "max_persons": max_persons,
+        "person_count": person_count,
         "active_album_id": album_id,
         "active_album_name": active_album.name if active_album is not None else None,
         "message": "Keine Treffer." if total == 0 else "",
     }
+
+
+def _get_person_count_param() -> int | None:
+    person_count = request.args.get("person_count", default=None, type=int)
+    if person_count is None:
+        person_count = request.args.get("max_persons", default=None, type=int)
+    return person_count
+
+
+def _get_person_count_form_param() -> int | None:
+    person_count = request.form.get("person_count", default=None, type=int)
+    if person_count is None:
+        person_count = request.form.get("max_persons", default=None, type=int)
+    return person_count
 
 
 @web_blueprint.get("/")
@@ -319,17 +342,17 @@ def home():
     query = request.args.get("q", "").strip()
     page = request.args.get("page", default=1, type=int)
     per_page = request.args.get("per_page", default=24, type=int)
-    max_persons = request.args.get("max_persons", default=None, type=int)
+    person_count = _get_person_count_param()
     album_id = request.args.get("album_id", default=None, type=int)
     payload = _build_page_payload(
         query=query,
         page=page,
         per_page=per_page,
-        max_persons=max_persons,
+        person_count=person_count,
         album_id=album_id,
     )
-    payload.update(_build_album_payload(query=query, per_page=per_page, max_persons=max_persons, album_id=album_id))
-    
+    payload.update(_build_album_payload(query=query, per_page=per_page, person_count=person_count, album_id=album_id))
+
     # Füge Personen hinzu
     db_path: Path = current_app.config["DB_PATH"]
     persons = list_persons(db_path=db_path) if db_path.exists() else []
@@ -350,16 +373,16 @@ def search_partial():
     query = request.args.get("q", "").strip()
     page = request.args.get("page", default=1, type=int)
     per_page = request.args.get("per_page", default=24, type=int)
-    max_persons = request.args.get("max_persons", default=None, type=int)
+    person_count = _get_person_count_param()
     album_id = request.args.get("album_id", default=None, type=int)
     payload = _build_page_payload(
         query=query,
         page=page,
         per_page=per_page,
-        max_persons=max_persons,
+        person_count=person_count,
         album_id=album_id,
     )
-    payload.update(_build_album_payload(query=query, per_page=per_page, max_persons=max_persons, album_id=album_id))
+    payload.update(_build_album_payload(query=query, per_page=per_page, person_count=person_count, album_id=album_id))
 
     # Füge Personen hinzu
     db_path: Path = current_app.config["DB_PATH"]
@@ -381,13 +404,13 @@ def search_api():
     query = request.args.get("q", "").strip()
     page = request.args.get("page", default=1, type=int)
     per_page = request.args.get("per_page", default=24, type=int)
-    max_persons = request.args.get("max_persons", default=None, type=int)
+    person_count = _get_person_count_param()
     album_id = request.args.get("album_id", default=None, type=int)
     payload = _build_page_payload(
         query=query,
         page=page,
         per_page=per_page,
-        max_persons=max_persons,
+        person_count=person_count,
         album_id=album_id,
     )
     return jsonify(payload)
@@ -397,9 +420,9 @@ def search_api():
 def albums_sidebar():
     query = request.args.get("q", "").strip()
     per_page = request.args.get("per_page", default=24, type=int)
-    max_persons = request.args.get("max_persons", default=None, type=int)
+    person_count = _get_person_count_param()
     album_id = request.args.get("album_id", default=None, type=int)
-    payload = _build_album_payload(query=query, per_page=per_page, max_persons=max_persons, album_id=album_id)
+    payload = _build_album_payload(query=query, per_page=per_page, person_count=person_count, album_id=album_id)
     return render_template("_albums.html", **payload)
 
 
@@ -415,9 +438,9 @@ def create_album_route():
 
     query = request.form.get("q", "").strip()
     per_page = request.form.get("per_page", default=24, type=int)
-    max_persons = request.form.get("max_persons", default=None, type=int)
+    person_count = _get_person_count_form_param()
     album_id = request.form.get("album_id", default=None, type=int)
-    payload = _build_album_payload(query=query, per_page=per_page, max_persons=max_persons, album_id=album_id)
+    payload = _build_album_payload(query=query, per_page=per_page, person_count=person_count, album_id=album_id)
     return render_template("_albums.html", **payload)
 
 
@@ -450,6 +473,95 @@ def rename_album_route(album_id: int):
         return jsonify({"error": str(error)}), 400
 
     return jsonify({"ok": True, "album_id": album.id, "name": album.name})
+
+
+@web_blueprint.post("/albums/<int:album_id>/duplicate")
+def duplicate_album_route(album_id: int):
+    db_path: Path = current_app.config["DB_PATH"]
+    try:
+        album = duplicate_album(db_path=db_path, album_id=album_id)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+    return jsonify({"ok": True, "album_id": album.id, "name": album.name, "photo_count": album.photo_count})
+
+
+@web_blueprint.post("/albums/<int:album_id>/train-reference")
+def train_reference_album_route(album_id: int):
+    db_path: Path = current_app.config["DB_PATH"]
+    ensure_schema(db_path)
+
+    album = get_album(db_path=db_path, album_id=album_id)
+    if album is None:
+        return jsonify({"error": "Album nicht gefunden."}), 404
+
+    person_name = parse_reference_album_name(album.name)
+    if person_name is None:
+        return jsonify({"error": "Nur Alben mit Präfix 'Ref:' können als Personenreferenz angelernt werden."}), 400
+
+    try:
+        photo_paths = list_album_photo_paths(db_path=db_path, album_id=album_id)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+    if not photo_paths:
+        return jsonify({"error": "Ref-Album enthält keine Bilder."}), 400
+
+    from .admin_jobs import get_job_manager
+
+    job_manager = get_job_manager()
+    job_id = f"train_ref_{album_id}_{uuid.uuid4().hex[:8]}"
+    # Stufenmodell: Vorbereitung -> Embeddings/Training -> Persistenz
+    job = job_manager.create_job(job_id, "train_reference_person", total=3)
+
+    def _run_train_reference(progress_job):
+        job_manager.update_progress(
+            progress_job.job_id,
+            1,
+            progress_job.total,
+            f"Vorbereitung abgeschlossen: {len(photo_paths)} Bilder im Ref-Album gefunden.",
+        )
+
+        job_manager.update_progress(
+            progress_job.job_id,
+            2,
+            progress_job.total,
+            f"Lerne Person '{person_name}' mit InsightFace an ({len(photo_paths)} Bilder)...",
+        )
+
+        result = enroll_person_from_paths(
+            db_path=db_path,
+            person_name=person_name,
+            image_paths=photo_paths,
+            preferred_backend="insightface",
+            strict_backend=True,
+        )
+
+        job_manager.update_progress(
+            progress_job.job_id,
+            3,
+            progress_job.total,
+            "Persistiere neue Referenzen...",
+        )
+
+        progress_job.message = (
+            f"Person '{result.person_name}' neu angelernt: "
+            f"{result.sample_count} Samples aus {result.image_count} Bildern "
+            f"(Backend: {result.backend})."
+        )
+
+    job_manager.run_job_async(job.job_id, _run_train_reference)
+
+    return jsonify(
+        {
+            "ok": True,
+            "album_id": album_id,
+            "person_name": person_name,
+            "job_id": job.job_id,
+            "status": "started",
+            "status_url": f"/api/admin/job/{job.job_id}",
+        }
+    ), 202
 
 
 @web_blueprint.delete("/albums/<int:album_id>")
@@ -546,12 +658,12 @@ def map_view():
     """Zeigt eine Karte mit Foto-Positionen."""
     query = request.args.get("q", "").strip()
     album_id = request.args.get("album_id", default=None, type=int)
-    max_persons = request.args.get("max_persons", default=None, type=int)
+    person_count = _get_person_count_param()
     return render_template(
         "map.html",
         query=query,
         active_album_id=album_id,
-        max_persons=max_persons,
+        person_count=person_count,
     )
 
 
@@ -560,7 +672,7 @@ def api_photos_with_location():
     """API-Endpoint für Fotos mit GPS-Daten."""
     db_path: Path = current_app.config["DB_PATH"]
     query = request.args.get("q", "").strip()
-    max_persons = request.args.get("max_persons", default=None, type=int)
+    person_count = _get_person_count_param()
     album_id = request.args.get("album_id", default=None, type=int)
     limit = request.args.get("limit", default=20000, type=int)
     safe_limit = max(1, min(limit, 50000))
@@ -572,7 +684,7 @@ def api_photos_with_location():
 
     filter_sql, filter_params = _build_photo_filter_clause(
         query=query,
-        max_persons=max_persons,
+        person_count=person_count,
         album_id=album_id,
     )
 
@@ -717,6 +829,68 @@ def api_photo_details(token: str):
     return jsonify(result)
 
 
+@web_blueprint.post("/api/albums/<int:album_id>/export-zip")
+def api_album_export_zip(album_id: int):
+    db_path: Path = current_app.config["DB_PATH"]
+    cache_dir: Path = current_app.config["CACHE_DIR"]
+
+    if not db_path.exists():
+        return jsonify({"error": "Index nicht gefunden"}), 404
+
+    body = request.get_json(silent=True) or {}
+    ratio = str(body.get("ratio", "1:1")).strip()
+    person_name = str(body.get("person", "")).strip()
+
+    try:
+        parse_ratio(ratio)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+    try:
+        result = export_album_zip(
+            db_path=db_path,
+            cache_dir=cache_dir,
+            album_id=album_id,
+            ratio_text=ratio,
+            person_name=person_name or None,
+        )
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+    token = _encode_path(str(result.zip_path))
+    return jsonify(
+        {
+            "ok": True,
+            "count": result.exported_count,
+            "download_url": f"/api/albums/export/download/{token}",
+            "file_name": result.zip_path.name,
+        }
+    )
+
+
+@web_blueprint.get("/api/albums/export/download/<token>")
+def api_album_export_download(token: str):
+    cache_dir: Path = current_app.config["CACHE_DIR"]
+    exports_dir = (cache_dir / "exports").resolve()
+
+    try:
+        archive_path = _decode_path(token).resolve()
+    except ValueError:
+        abort(404)
+
+    if exports_dir not in archive_path.parents:
+        abort(404)
+    if not archive_path.exists() or not archive_path.is_file():
+        abort(404)
+
+    return send_file(
+        archive_path,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=archive_path.name,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Timelapse-Endpunkte
 # ---------------------------------------------------------------------------
@@ -731,7 +905,6 @@ def api_album_timelapse(album_id: int):
 
     Antwort:
       202 { "job_id": "...", "status_url": "..." }   – Generierung läuft
-      200 { "ok": true, "download_url": "..." }       – sofort fertig (gecacht)
     """
     from ..albums.timelapse import TimelapseConfig, generate_aging_timelapse
 
@@ -755,17 +928,19 @@ def api_album_timelapse(album_id: int):
     exports_dir = cache_dir / "exports"
     output_path = exports_dir / f"{job_id}.mp4"
 
-    # Bereits fertig?
-    if output_path.exists():
-        return jsonify({"ok": True, "download_url": f"/api/albums/timelapse/download/{job_id}"})
-
     with _timelapse_lock:
         job = _timelapse_jobs.get(job_id)
-        if job and job["status"] == "done":
-            return jsonify({"ok": True, "download_url": f"/api/albums/timelapse/download/{job_id}"})
         if job and job["status"] == "running":
             return jsonify({"job_id": job_id, "status": "running",
                             "status_url": f"/api/albums/timelapse/status/{job_id}"}), 202
+        if job and job["status"] in {"done", "error"}:
+            _timelapse_jobs.pop(job_id, None)
+
+    if output_path.exists():
+        try:
+            output_path.unlink()
+        except OSError as error:
+            return jsonify({"error": f"Vorhandenes Video konnte nicht gelöscht werden: {error}"}), 500
 
     # Neuen Job starten
     cfg = TimelapseConfig(fps=fps, hold_frames=hold, morph_frames=morph, output_size=size)
@@ -845,4 +1020,168 @@ def api_timelapse_download(job_id: str):
         as_attachment=True,
         download_name=f"{job_id}.mp4",
     )
+
+
+# ===========================================================================
+# Admin-Seite und Job-Management
+# ===========================================================================
+
+
+@web_blueprint.get("/admin")
+def admin_page():
+    """Admin-Dashboard für Index-Konfiguration und Job-Management."""
+    return render_template("admin.html")
+
+
+@web_blueprint.get("/api/admin/config")
+def api_admin_get_config():
+    """Lädt gespeicherte Admin-Konfiguration aus SQLite."""
+    db_path: Path = current_app.config["DB_PATH"]
+    ensure_schema(db_path)
+    return jsonify(get_admin_config(db_path))
+
+
+@web_blueprint.post("/api/admin/config")
+def api_admin_save_config():
+    """Speichert Admin-Konfiguration in SQLite."""
+    db_path: Path = current_app.config["DB_PATH"]
+    ensure_schema(db_path)
+    payload = request.get_json() or {}
+    return jsonify(save_admin_config(db_path, payload))
+
+
+@web_blueprint.post("/api/admin/config/start-index")
+def api_admin_start_index():
+    """Startet Full-Index Job."""
+    from .admin_jobs import get_job_manager
+    from .admin_service import AdminService
+
+    try:
+        data = request.get_json() or {}
+        photo_roots = data.get("photo_roots", [])
+        
+        if not photo_roots:
+            return jsonify({"error": "Keine Foto-Pfade angegeben"}), 400
+
+        # Validiere Pfade
+        for root in photo_roots:
+            p = Path(root)
+            if not p.exists():
+                return jsonify({"error": f"Pfad existiert nicht: {root}"}), 400
+
+        app_config: AppConfig = current_app.config.get("APP_CONFIG")
+        db_path: Path = current_app.config["DB_PATH"]
+        ensure_schema(db_path)
+        save_admin_config(
+            db_path,
+            {
+                "photo_roots": photo_roots,
+                "person_backend": data.get("person_backend"),
+                "force_reindex": data.get("force_reindex", False),
+                "index_workers": data.get("index_workers", 1),
+                "near_duplicates": data.get("near_duplicates", False),
+                "phash_threshold": data.get("phash_threshold", 6),
+            },
+        )
+
+        job_manager = get_job_manager()
+        admin_service = AdminService(app_config, job_manager)
+
+        job_id = admin_service.start_full_index(
+            photo_roots=photo_roots,
+            person_backend=data.get("person_backend"),
+            force_reindex=data.get("force_reindex", False),
+            index_workers=data.get("index_workers", 1),
+            near_duplicates=data.get("near_duplicates", False),
+            phash_threshold=data.get("phash_threshold", 6),
+        )
+
+        return jsonify({"job_id": job_id, "status": "started"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@web_blueprint.post("/api/admin/config/start-exif")
+def api_admin_start_exif():
+    """Startet EXIF-Update Job."""
+    from .admin_jobs import get_job_manager
+    from .admin_service import AdminService
+
+    try:
+        app_config: AppConfig = current_app.config.get("APP_CONFIG")
+        job_manager = get_job_manager()
+        admin_service = AdminService(app_config, job_manager)
+
+        job_id = admin_service.start_exif_update()
+        return jsonify({"job_id": job_id, "status": "started"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@web_blueprint.post("/api/admin/config/start-rematch")
+def api_admin_start_rematch():
+    """Startet Rematch-Persons Job."""
+    from .admin_jobs import get_job_manager
+    from .admin_service import AdminService
+
+    try:
+        data = request.get_json() or {}
+        app_config: AppConfig = current_app.config.get("APP_CONFIG")
+        db_path: Path = current_app.config["DB_PATH"]
+        ensure_schema(db_path)
+        save_admin_config(
+            db_path,
+            {
+                "person_backend": data.get("person_backend"),
+                "rematch_workers": data.get("workers", 1),
+            },
+        )
+        job_manager = get_job_manager()
+        admin_service = AdminService(app_config, job_manager)
+
+        job_id = admin_service.start_rematch_persons(
+            person_backend=data.get("person_backend"),
+            workers=data.get("workers", 1),
+        )
+        return jsonify({"job_id": job_id, "status": "started"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@web_blueprint.get("/api/admin/job/<job_id>")
+def api_admin_job_status(job_id: str):
+    """Gibt den Status eines Jobs zurück."""
+    from .admin_jobs import get_job_manager
+
+    job_manager = get_job_manager()
+    job = job_manager.get_job(job_id)
+
+    if job is None:
+        return jsonify({"error": "Job nicht gefunden"}), 404
+
+    return jsonify(job.to_dict())
+
+
+@web_blueprint.post("/api/admin/job/<job_id>/abort")
+def api_admin_job_abort(job_id: str):
+    """Fordert Abbruch eines Jobs an."""
+    from .admin_jobs import get_job_manager
+
+    job_manager = get_job_manager()
+    if job_manager.request_abort(job_id):
+        return jsonify({"status": "abort_requested"})
+    else:
+        return jsonify({"error": "Job kann nicht abgebrochen werden"}), 400
+
+
+@web_blueprint.get("/api/admin/jobs")
+def api_admin_jobs_list():
+    """Gibt Liste aller Jobs zurück."""
+    from .admin_jobs import get_job_manager
+
+    job_manager = get_job_manager()
+    # Cleanup alte Jobs
+    job_manager.cleanup_old_jobs()
+    jobs = job_manager.get_all_jobs()
+    return jsonify([job.to_dict() for job in jobs])
 

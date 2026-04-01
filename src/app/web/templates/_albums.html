@@ -13,7 +13,7 @@
     <input type="text" name="name" placeholder="Neues Album" maxlength="120" />
     <input type="hidden" name="q" value="{{ query }}" />
     <input type="hidden" name="per_page" value="{{ per_page }}" />
-    <input type="hidden" name="max_persons" value="{{ max_persons if max_persons else '' }}" />
+    <input type="hidden" name="person_count" value="{{ person_count if person_count else '' }}" />
     <input type="hidden" name="album_id" value="{{ active_album_id if active_album_id else '' }}" />
     <button type="submit">Anlegen</button>
   </form>
@@ -21,7 +21,7 @@
   <div class="album-list">
     <a
       class="album-box {% if not active_album_id %}is-active{% endif %}"
-      href="{{ url_for('web.home', q=query, per_page=per_page, max_persons=max_persons) }}"
+      href="{{ url_for('web.home', q=query, per_page=per_page, person_count=person_count) }}"
     >
       <span class="album-name">Alle Bilder</span>
       <span class="album-count">—</span>
@@ -31,16 +31,40 @@
     <div class="album-box-wrapper" data-album-id="{{ album.id }}">
       <a
         class="album-box {% if album.active %}is-active{% endif %}"
-        href="{{ url_for('web.home', q=query, per_page=per_page, max_persons=max_persons, album_id=album.id) }}"
+        href="{{ url_for('web.home', q=query, per_page=per_page, person_count=person_count, album_id=album.id) }}"
         data-album-drop="true"
         data-album-id="{{ album.id }}"
       >
         <span class="album-name">{{ album.name }}</span>
         <span class="album-count">{{ album.photo_count }}</span>
       </a>
-      <div class="album-actions">
-        <button type="button" class="album-action-btn" data-album-id="{{ album.id }}" data-album-name="{{ album.name }}" onclick="renameAlbumPrompt(this)">✎</button>
-        <button type="button" class="album-action-btn delete" data-album-id="{{ album.id }}" data-album-name="{{ album.name }}" onclick="deleteAlbumPrompt(this)">✕</button>
+      <div class="album-actions-menu" data-album-menu>
+        <button
+          type="button"
+          class="album-menu-toggle"
+          aria-label="Album-Aktionen"
+          aria-expanded="false"
+          onclick="toggleAlbumMenu(event, this)"
+        >
+          ⋯
+        </button>
+        <div class="album-actions-dropdown" data-album-menu-dropdown>
+          {% if album.is_reference %}
+          <button
+            type="button"
+            class="album-action-btn"
+            data-album-id="{{ album.id }}"
+            data-album-name="{{ album.name }}"
+            data-reference-person-name="{{ album.reference_person_name }}"
+            onclick="trainReferenceAlbumPrompt(this)"
+          >
+            Person anlernen
+          </button>
+          {% endif %}
+          <button type="button" class="album-action-btn" data-album-id="{{ album.id }}" data-album-name="{{ album.name }}" onclick="duplicateAlbumPrompt(this)">Kopieren</button>
+          <button type="button" class="album-action-btn" data-album-id="{{ album.id }}" data-album-name="{{ album.name }}" onclick="renameAlbumPrompt(this)">Umbenennen</button>
+          <button type="button" class="album-action-btn delete" data-album-id="{{ album.id }}" data-album-name="{{ album.name }}" onclick="deleteAlbumPrompt(this)">Löschen</button>
+        </div>
       </div>
     </div>
     {% endfor %}
@@ -82,6 +106,44 @@
     </div>
 
     <div id="timelapse-status" class="timelapse-status">Bereit.</div>
+  </div>
+
+  <div class="album-export-panel" data-album-export-panel="1" data-album-id="{{ active_album_id }}">
+    <h3>Album-Export (ZIP)</h3>
+    <p>Alle Bilder als ZIP exportieren. Optional auf eine Person zentriert zuschneiden.</p>
+
+    <div class="timelapse-form-row">
+      <input
+        type="text"
+        id="album-export-person-input"
+        placeholder="Person (optional)"
+        list="album-export-person-suggestions"
+      />
+      <datalist id="album-export-person-suggestions">
+        {% for person in persons|default([]) %}
+        <option value="{{ person.name }}"></option>
+        {% endfor %}
+      </datalist>
+    </div>
+
+    <div class="timelapse-form-grid">
+      <label>
+        Format
+        <select id="album-export-ratio-select">
+          <option value="3:2">3:2</option>
+          <option value="4:3">4:3</option>
+          <option value="16:9">16:9</option>
+          <option value="1:1" selected>1:1</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="timelapse-actions">
+      <button type="button" id="album-export-start-btn" onclick="startAlbumZipExport()">ZIP erstellen</button>
+      <a id="album-export-download-link" class="timelapse-download-link" href="#" style="display:none;">Download ZIP</a>
+    </div>
+
+    <div id="album-export-status" class="timelapse-status">Bereit.</div>
   </div>
   {% endif %}
 </section>

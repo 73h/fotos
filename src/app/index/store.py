@@ -12,6 +12,17 @@ from PIL import Image
 from ..ingest import ImageRecord
 
 
+ADMIN_CONFIG_DEFAULTS: dict[str, object] = {
+    "photo_roots": [],
+    "person_backend": None,
+    "force_reindex": False,
+    "index_workers": 1,
+    "near_duplicates": False,
+    "phash_threshold": 6,
+    "rematch_workers": 1,
+}
+
+
 @dataclass(frozen=True)
 class IndexedPhoto:
     path: str
@@ -119,6 +130,14 @@ def ensure_schema(db_path: Path) -> None:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_album_photos_album ON album_photos(album_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_album_photos_photo ON album_photos(photo_path)")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS admin_config (
+                key TEXT PRIMARY KEY,
+                value_json TEXT NOT NULL
+            )
+            """
+        )
 
         existing_album_columns = {
             row[1] for row in conn.execute("PRAGMA table_info(albums)").fetchall()
@@ -178,6 +197,77 @@ def ensure_schema(db_path: Path) -> None:
         
         # Erstelle Indizes nach allen Migrationen
         conn.execute("CREATE INDEX IF NOT EXISTS idx_photos_taken_ts ON photos(taken_ts)")
+
+
+def _normalize_admin_config(raw_config: dict[str, object]) -> dict[str, object]:
+    normalized = dict(ADMIN_CONFIG_DEFAULTS)
+
+    raw_roots = raw_config.get("photo_roots")
+    if isinstance(raw_roots, list):
+        normalized["photo_roots"] = [str(item).strip() for item in raw_roots if str(item).strip()]
+
+    raw_backend = raw_config.get("person_backend")
+    if raw_backend in (None, "", "auto", "insightface", "histogram"):
+        normalized["person_backend"] = raw_backend or None
+
+    normalized["force_reindex"] = bool(raw_config.get("force_reindex", normalized["force_reindex"]))
+    normalized["near_duplicates"] = bool(raw_config.get("near_duplicates", normalized["near_duplicates"]))
+
+    try:
+        normalized["index_workers"] = max(1, int(raw_config.get("index_workers", normalized["index_workers"])))
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        normalized["phash_threshold"] = max(0, min(64, int(raw_config.get("phash_threshold", normalized["phash_threshold"]))))
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        normalized["rematch_workers"] = max(1, int(raw_config.get("rematch_workers", normalized["rematch_workers"])))
+    except (TypeError, ValueError):
+        pass
+
+    return normalized
+
+
+def get_admin_config(db_path: Path) -> dict[str, object]:
+    ensure_schema(db_path)
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute("SELECT key, value_json FROM admin_config").fetchall()
+
+    raw_config: dict[str, object] = {}
+    for key, value_json in rows:
+        try:
+            raw_config[key] = json.loads(value_json)
+        except json.JSONDecodeError:
+            continue
+
+    return _normalize_admin_config(raw_config)
+
+
+def save_admin_config(db_path: Path, config_values: dict[str, object]) -> dict[str, object]:
+    ensure_schema(db_path)
+    current = get_admin_config(db_path)
+    merged = dict(current)
+    for key in ADMIN_CONFIG_DEFAULTS:
+        if key in config_values:
+            merged[key] = config_values[key]
+
+    normalized = _normalize_admin_config(merged)
+
+    with sqlite3.connect(db_path) as conn:
+        for key, value in normalized.items():
+            conn.execute(
+                """
+                INSERT INTO admin_config (key, value_json)
+                VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json
+                """,
+                (key, json.dumps(value)),
+            )
+
+    return normalized
 
 
 def sha1_of_file(path: Path) -> str:
@@ -472,7 +562,7 @@ def search_photos_page(
     query: str,
     limit: int = 20,
     offset: int = 0,
-    max_persons: int | None = None,
+    person_count: int | None = None,
     album_id: int | None = None,
 ) -> tuple[list[IndexedPhoto], int]:
     import datetime
@@ -483,7 +573,14 @@ def search_photos_page(
     person_filter = filters["person"]
     smile_min = filters["smile_min"]
 
-    if not terms and album_id is None and not (month_filter or year_filter) and not person_filter and smile_min is None:
+    if (
+        not terms
+        and album_id is None
+        and person_count is None
+        and not (month_filter or year_filter)
+        and not person_filter
+        and smile_min is None
+    ):
         return [], 0
 
     where_parts = ["search_blob LIKE ?" for _ in terms]
@@ -554,8 +651,8 @@ def search_photos_page(
             """
         )
 
-    if max_persons is not None:
-        where_parts.append("person_count <= ?")
+    if person_count is not None:
+        where_parts.append("person_count = ?")
     if album_id is not None:
         where_parts.append(
             "EXISTS (SELECT 1 FROM album_photos ap WHERE ap.photo_path = photos.path AND ap.album_id = ?)"
@@ -596,8 +693,8 @@ def search_photos_page(
     elif smile_min is not None:
         base_params.append(smile_min)
 
-    if max_persons is not None:
-        base_params.append(max_persons)
+    if person_count is not None:
+        base_params.append(person_count)
     if album_id is not None:
         base_params.append(album_id)
     params: list[object] = [*base_params, limit, offset]

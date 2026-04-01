@@ -383,6 +383,8 @@ def generate_aging_timelapse(
 
     # 4. Video schreiben
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.exists():
+        output_path.unlink()
     fourcc = cv2.VideoWriter_fourcc(*cfg.codec)
     writer = cv2.VideoWriter(
         str(output_path), fourcc, cfg.fps, (cfg.output_size, cfg.output_size)

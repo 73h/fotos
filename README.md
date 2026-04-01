@@ -19,6 +19,7 @@ Der Fokus liegt auf:
 - Personensuche per Name (`search-person`, `person:<name>`)
 - Smile-Filter in Suche und Web-API (`smile>=...`)
 - Alben anlegen, umbenennen, Cover setzen, Fotos zuweisen
+- `Ref:`-Alben als Personenreferenz nutzen und Personen daraus per InsightFace neu anlernen
 - Aging-Timelapse pro Album+Person als MP4 (CLI + Web-API + Download)
 - Weboberflaeche mit Thumbnail-Cache, Pagination und API-Endpunkten
 
@@ -96,6 +97,17 @@ curl -Method POST "http://127.0.0.1:5000/api/albums/1/timelapse" -ContentType "a
 curl "http://127.0.0.1:5000/api/albums/timelapse/status/album_1_marie"
 curl "http://127.0.0.1:5000/api/albums/timelapse/download/album_1_marie" -OutFile "marie_aging.mp4"
 ```
+
+### 5) Personen ueber Ref-Alben neu anlernen
+
+Wenn ein Album mit `Ref:` beginnt, wird der Name nach dem Doppelpunkt als Personenname verwendet.
+
+Beispiel:
+- Albumname: `Ref: Marie`
+- Wirkung: In der Web-UI erscheint im Album-Menue die Aktion **Person anlernen**
+
+Dabei werden alle Bilder des Albums als Referenzmaterial verwendet und die Referenzen der Person
+explizit mit **InsightFace** neu aufgebaut.
 
 ## Wichtige CLI-Kommandos
 

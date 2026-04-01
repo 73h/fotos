@@ -44,12 +44,13 @@ class EnrollResult:
 def extract_person_signatures(
     photo_path: Path,
     preferred_backend: str | None = None,
+    strict_backend: bool = False,
 ) -> tuple[str, list[tuple[list[float], float | None]], int]:
     """Gibt (backend_name, signatures_mit_smile, person_box_count) zurück."""
     if not photo_path.exists():
         return ("unknown", [], 0)
 
-    backend = resolve_backend(preferred_backend)
+    backend = resolve_backend(preferred_backend, strict=strict_backend)
 
     signatures: list[tuple[list[float], float | None]] = []
     try:
@@ -115,19 +116,37 @@ def enroll_person(
     supported_extensions: tuple[str, ...],
     preferred_backend: str | None = None,
 ) -> EnrollResult:
-    backend = resolve_backend(preferred_backend)
     images = scan_images(root=root, supported_extensions=supported_extensions)
+
+    return enroll_person_from_paths(
+        db_path=db_path,
+        person_name=person_name,
+        image_paths=[image_record.path for image_record in images],
+        preferred_backend=preferred_backend,
+    )
+
+
+def enroll_person_from_paths(
+    db_path: Path,
+    person_name: str,
+    image_paths: list[Path],
+    preferred_backend: str | None = None,
+    strict_backend: bool = False,
+) -> EnrollResult:
+    backend = resolve_backend(preferred_backend, strict=strict_backend)
+    unique_image_paths = list(dict.fromkeys(path for path in image_paths))
     source_vectors: list[tuple[str, list[float]]] = []
     backend_name = backend.name
 
-    for image_record in images:
+    for image_path in unique_image_paths:
         used_backend_name, signatures, _box_count = extract_person_signatures(
-            image_record.path,
+            image_path,
             preferred_backend=preferred_backend,
+            strict_backend=strict_backend,
         )
         backend_name = used_backend_name
         for signature, _smile_score in signatures:
-            source_vectors.append((str(image_record.path), signature))
+            source_vectors.append((str(image_path), signature))
 
     if not source_vectors:
         raise ValueError(
@@ -147,7 +166,7 @@ def enroll_person(
     return EnrollResult(
         person_name=person_name,
         backend=backend_name,
-        image_count=len(images),
+        image_count=len(unique_image_paths),
         sample_count=len(source_vectors),
     )
 

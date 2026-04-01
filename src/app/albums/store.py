@@ -13,6 +13,15 @@ class AlbumSummary:
     photo_count: int
 
 
+def parse_reference_album_name(album_name: str) -> str | None:
+    normalized_name = album_name.strip()
+    if not normalized_name.lower().startswith("ref:"):
+        return None
+
+    person_name = normalized_name.split(":", 1)[1].strip()
+    return person_name or None
+
+
 def create_album(db_path: Path, name: str) -> AlbumSummary:
     normalized_name = name.strip()
     if not normalized_name:
@@ -59,6 +68,42 @@ def get_album(db_path: Path, album_id: int) -> AlbumSummary | None:
     if row is None:
         return None
     return AlbumSummary(id=int(row[0]), name=str(row[1]), photo_count=int(row[2]))
+
+
+def list_album_photo_paths(db_path: Path, album_id: int) -> list[Path]:
+    with sqlite3.connect(db_path) as conn:
+        album_row = conn.execute("SELECT id FROM albums WHERE id = ?", (album_id,)).fetchone()
+        if album_row is None:
+            raise ValueError("Album nicht gefunden.")
+
+        rows = conn.execute(
+            """
+            SELECT photo_path
+            FROM album_photos
+            WHERE album_id = ?
+            ORDER BY added_ts ASC, photo_path ASC
+            """,
+            (album_id,),
+        ).fetchall()
+
+    return [Path(str(row[0])) for row in rows]
+
+
+def _build_duplicate_album_name(conn: sqlite3.Connection, source_name: str) -> str:
+    base_name = f"{source_name} (Kopie)"
+    existing_names = {
+        str(row[0]).lower()
+        for row in conn.execute("SELECT name FROM albums WHERE lower(name) LIKE lower(?)", (f"{source_name}%",)).fetchall()
+    }
+    if base_name.lower() not in existing_names:
+        return base_name
+
+    counter = 2
+    while True:
+        candidate = f"{source_name} (Kopie {counter})"
+        if candidate.lower() not in existing_names:
+            return candidate
+        counter += 1
 
 
 def list_albums(db_path: Path) -> list[AlbumSummary]:
@@ -134,6 +179,62 @@ def rename_album(db_path: Path, album_id: int, new_name: str) -> AlbumSummary:
 
     if row is None:
         raise ValueError("Album nicht gefunden.")
+    return AlbumSummary(id=int(row[0]), name=str(row[1]), photo_count=int(row[2]))
+
+
+def duplicate_album(db_path: Path, album_id: int) -> AlbumSummary:
+    """Erstellt eine Kopie eines Albums inkl. Foto-Zuordnungen und optionalem Cover."""
+    with sqlite3.connect(db_path) as conn:
+        source_row = conn.execute(
+            "SELECT id, name, cover_photo_path FROM albums WHERE id = ?",
+            (album_id,),
+        ).fetchone()
+        if source_row is None:
+            raise ValueError("Album nicht gefunden.")
+
+        source_name = str(source_row[1])
+        cover_photo_path = str(source_row[2]) if source_row[2] is not None else None
+        target_name = _build_duplicate_album_name(conn, source_name)
+        now_ts = time.time()
+
+        cursor = conn.execute(
+            """
+            INSERT INTO albums (name, created_ts, cover_photo_path, updated_ts)
+            VALUES (?, ?, ?, ?)
+            """,
+            (target_name, now_ts, cover_photo_path, now_ts),
+        )
+        if cursor.lastrowid is None:
+            raise RuntimeError("Album konnte nicht dupliziert werden.")
+        new_album_id = int(cursor.lastrowid)
+
+        photo_rows = conn.execute(
+            "SELECT photo_path, added_ts FROM album_photos WHERE album_id = ? ORDER BY added_ts ASC",
+            (album_id,),
+        ).fetchall()
+        if photo_rows:
+            conn.executemany(
+                """
+                INSERT INTO album_photos (album_id, photo_path, added_ts)
+                VALUES (?, ?, ?)
+                ON CONFLICT(album_id, photo_path) DO NOTHING
+                """,
+                [(new_album_id, str(photo_path), float(added_ts)) for photo_path, added_ts in photo_rows],
+            )
+
+        row = conn.execute(
+            """
+            SELECT a.id, a.name, COUNT(ap.photo_path)
+            FROM albums a
+            LEFT JOIN album_photos ap ON ap.album_id = a.id
+            WHERE a.id = ?
+            GROUP BY a.id, a.name
+            """,
+            (new_album_id,),
+        ).fetchone()
+
+    if row is None:
+        raise RuntimeError("Album konnte nicht dupliziert werden.")
     return AlbumSummary(id=int(row[0]), name=str(row[1]), photo_count=int(row[2]))
 
 

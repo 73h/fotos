@@ -21,11 +21,49 @@
     const menu = document.getElementById("menu-dropdown");
     const toggle = document.getElementById("menu-toggle");
 
-    if (menu && toggle && !menuContainer.contains(event.target)) {
+    if (menu && toggle && menuContainer && !menuContainer.contains(event.target)) {
       menu.classList.remove("show");
       toggle.classList.remove("active");
     }
+
+    closeAlbumMenus(event.target);
   });
+
+  function closeAlbumMenus(target = null) {
+    document.querySelectorAll("[data-album-menu]").forEach((menuWrapper) => {
+      if (target && menuWrapper.contains(target)) {
+        return;
+      }
+      const toggle = menuWrapper.querySelector(".album-menu-toggle");
+      const dropdown = menuWrapper.querySelector("[data-album-menu-dropdown]");
+      if (toggle) {
+        toggle.setAttribute("aria-expanded", "false");
+      }
+      if (dropdown) {
+        dropdown.classList.remove("show");
+      }
+    });
+  }
+
+  function toggleAlbumMenu(event, buttonElement) {
+    event.stopPropagation();
+    const menuWrapper = buttonElement.closest("[data-album-menu]");
+    if (!menuWrapper) {
+      return;
+    }
+
+    const dropdown = menuWrapper.querySelector("[data-album-menu-dropdown]");
+    if (!dropdown) {
+      return;
+    }
+
+    const isOpen = dropdown.classList.contains("show");
+    closeAlbumMenus();
+    if (!isOpen) {
+      dropdown.classList.add("show");
+      buttonElement.setAttribute("aria-expanded", "true");
+    }
+  }
 
   function getSearchState() {
     const form = document.getElementById("search-form");
@@ -40,6 +78,43 @@
       }
     });
     return params;
+  }
+
+  function updateSearchMenuLinks() {
+    const mapLink = document.getElementById("open-map-link");
+    if (!mapLink) {
+      return;
+    }
+
+    const baseUrl = mapLink.dataset.baseUrl || "/map";
+    const url = new URL(baseUrl, window.location.origin);
+    const params = getSearchState();
+
+    ["q", "album_id", "person_count"].forEach((key) => {
+      const value = params.get(key);
+      if (value) {
+        url.searchParams.set(key, value);
+      }
+    });
+
+    mapLink.href = `${url.pathname}${url.search}`;
+  }
+
+  function bindSearchFormEnhancements() {
+    const form = document.getElementById("search-form");
+    if (!form) {
+      return;
+    }
+
+    updateSearchMenuLinks();
+
+    if (form.dataset.searchUiBound === "1") {
+      return;
+    }
+
+    form.dataset.searchUiBound = "1";
+    form.addEventListener("input", updateSearchMenuLinks);
+    form.addEventListener("change", updateSearchMenuLinks);
   }
 
   async function refreshAlbumSidebar() {
@@ -254,6 +329,83 @@
     }
   }
 
+  function duplicateAlbumPrompt(buttonElement) {
+    const albumId = buttonElement.getAttribute("data-album-id");
+    const albumName = buttonElement.getAttribute("data-album-name");
+    if (!albumId) {
+      return;
+    }
+
+    if (window.confirm(`Album "${albumName}" wirklich duplizieren?`)) {
+      duplicateAlbum(albumId);
+    }
+  }
+
+  async function duplicateAlbum(albumId) {
+    try {
+      const response = await fetch(`/albums/${albumId}/duplicate`, {
+        method: "POST",
+        headers: {
+          "HX-Request": "true",
+        },
+      });
+
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => ({}));
+        window.alert(errorPayload.error || "Album konnte nicht dupliziert werden.");
+        return;
+      }
+
+      const payload = await response.json().catch(() => ({}));
+      window.alert(`Album dupliziert: ${payload.name || "Kopie erstellt"}`);
+      await refreshAlbumSidebar();
+    } catch (error) {
+      window.alert(`Fehler: ${error}`);
+    }
+  }
+
+  function trainReferenceAlbumPrompt(buttonElement) {
+    const albumId = buttonElement.getAttribute("data-album-id");
+    const albumName = buttonElement.getAttribute("data-album-name");
+    const personName = buttonElement.getAttribute("data-reference-person-name");
+    if (!albumId || !personName) {
+      return;
+    }
+
+    if (
+      window.confirm(
+        `Person "${personName}" aus Album "${albumName}" mit allen enthaltenen Bildern neu anlernen?\n\nDafür wird InsightFace verwendet und vorhandene Referenzen werden ersetzt.`
+      )
+    ) {
+      trainReferenceAlbum(albumId, personName);
+    }
+  }
+
+  async function trainReferenceAlbum(albumId, personName) {
+    try {
+      const response = await fetch(`/albums/${albumId}/train-reference`, {
+        method: "POST",
+        headers: {
+          "HX-Request": "true",
+        },
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        window.alert(payload.error || "Person konnte nicht aus dem Ref-Album angelernt werden.");
+        return;
+      }
+
+      const jobId = payload.job_id ? String(payload.job_id) : "";
+      window.alert(
+        `Training fuer "${personName}" gestartet.${jobId ? `\nJob-ID: ${jobId}` : ""}\n\nDen Fortschritt siehst du im Admin-Bereich unter laufenden Jobs.`
+      );
+      await refreshAlbumSidebar();
+    } catch (error) {
+      window.alert(`Fehler: ${error}`);
+    }
+  }
+
   function filterByPerson() {
     const select = document.getElementById("person-filter-select");
     const personName = select.value;
@@ -435,13 +587,99 @@
     }
   }
 
+  function getAlbumExportElements() {
+    const panel = document.querySelector("[data-album-export-panel='1']");
+    if (!panel) {
+      return null;
+    }
+    return {
+      panel,
+      albumId: panel.dataset.albumId,
+      personInput: document.getElementById("album-export-person-input"),
+      ratioSelect: document.getElementById("album-export-ratio-select"),
+      startBtn: document.getElementById("album-export-start-btn"),
+      statusBox: document.getElementById("album-export-status"),
+      downloadLink: document.getElementById("album-export-download-link"),
+    };
+  }
+
+  function setAlbumExportStatus(text, isError = false) {
+    const ui = getAlbumExportElements();
+    if (!ui || !ui.statusBox) {
+      return;
+    }
+    ui.statusBox.textContent = text;
+    ui.statusBox.style.color = isError ? "#ff7a7a" : "";
+  }
+
+  async function startAlbumZipExport() {
+    const ui = getAlbumExportElements();
+    if (!ui || !ui.albumId) {
+      return;
+    }
+
+    const payload = {
+      person: ui.personInput ? ui.personInput.value.trim() : "",
+      ratio: ui.ratioSelect ? ui.ratioSelect.value : "1:1",
+    };
+
+    if (ui.startBtn) {
+      ui.startBtn.disabled = true;
+      ui.startBtn.textContent = "Exportiere...";
+    }
+    if (ui.downloadLink) {
+      ui.downloadLink.style.display = "none";
+      ui.downloadLink.removeAttribute("href");
+    }
+    setAlbumExportStatus("Erzeuge ZIP-Archiv...");
+
+    try {
+      const response = await fetch(`/api/albums/${ui.albumId}/export-zip`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "HX-Request": "true",
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.error || "Export fehlgeschlagen.");
+      }
+
+      if (!data.download_url) {
+        throw new Error("Download-URL fehlt in der Serverantwort.");
+      }
+
+      if (ui.downloadLink) {
+        ui.downloadLink.href = String(data.download_url);
+        ui.downloadLink.style.display = "inline-block";
+      }
+
+      setAlbumExportStatus(`Fertig: ${Number(data.count || 0)} Bild(er) im ZIP.`);
+      window.location.href = String(data.download_url);
+    } catch (error) {
+      setAlbumExportStatus(`Fehler: ${error}`, true);
+    } finally {
+      if (ui.startBtn) {
+        ui.startBtn.disabled = false;
+        ui.startBtn.textContent = "ZIP erstellen";
+      }
+    }
+  }
+
   // Export functions globally for inline onclick handlers
   window.renameAlbumPrompt = renameAlbumPrompt;
   window.deleteAlbumPrompt = deleteAlbumPrompt;
+  window.duplicateAlbumPrompt = duplicateAlbumPrompt;
+  window.trainReferenceAlbumPrompt = trainReferenceAlbumPrompt;
+  window.toggleAlbumMenu = toggleAlbumMenu;
   window.removePhotoFromAlbum = removePhotoFromAlbum;
   window.filterByPerson = filterByPerson;
   window.updateDateFilter = updateDateFilter;
   window.startAlbumTimelapse = startAlbumTimelapse;
+  window.startAlbumZipExport = startAlbumZipExport;
 
   // Photo Modal functions
   async function openPhotoModal(photoToken) {
@@ -603,8 +841,11 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     initAlbumDragDrop(document);
+    bindSearchFormEnhancements();
   });
   document.body.addEventListener("htmx:afterSwap", () => {
     initAlbumDragDrop(document);
+    bindSearchFormEnhancements();
+    updateSearchMenuLinks();
   });
 })();

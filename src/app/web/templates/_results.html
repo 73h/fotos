@@ -22,12 +22,12 @@
 </div>
 {% endif %}
 
-{% set mp_param = ('&max_persons=' ~ max_persons) if max_persons else '' %}
+{% set pc_param = ('&person_count=' ~ person_count) if person_count else '' %}
 {% set album_param = ('&album_id=' ~ active_album_id) if active_album_id else '' %}
 <nav class="pager">
   <button
     {% if not has_prev %}disabled{% endif %}
-    hx-get="{{ url_for('web.search_partial') }}?q={{ query|urlencode }}&page={{ page - 1 }}&per_page={{ per_page }}{{ mp_param }}{{ album_param }}"
+    hx-get="{{ url_for('web.search_partial') }}?q={{ query|urlencode }}&page={{ page - 1 }}&per_page={{ per_page }}{{ pc_param }}{{ album_param }}"
     hx-target="#results"
     hx-push-url="true"
   >
@@ -35,7 +35,7 @@
   </button>
   <button
     {% if not has_next %}disabled{% endif %}
-    hx-get="{{ url_for('web.search_partial') }}?q={{ query|urlencode }}&page={{ page + 1 }}&per_page={{ per_page }}{{ mp_param }}{{ album_param }}"
+    hx-get="{{ url_for('web.search_partial') }}?q={{ query|urlencode }}&page={{ page + 1 }}&per_page={{ per_page }}{{ pc_param }}{{ album_param }}"
     hx-target="#results"
     hx-push-url="true"
   >

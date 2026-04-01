@@ -1,0 +1,900 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="admin-container">
+  <!-- Header -->
+  <div class="admin-header">
+    <h1>🔧 Admin-Dashboard</h1>
+    <nav class="admin-nav">
+      <a href="/" class="nav-link">← Zurück zur Suche</a>
+    </nav>
+  </div>
+
+  <!-- Main Content -->
+  <div class="admin-content">
+    <!-- Config Section -->
+    <section class="admin-section">
+      <h2>📁 Foto-Pfade konfigurieren</h2>
+      <div class="config-form">
+        <div class="form-group">
+          <label for="photo-roots-input">Foto-Pfade (einer pro Zeile):</label>
+          <textarea
+            id="photo-roots-input"
+            class="photo-roots-textarea"
+            placeholder="z.B. C:\Meine Fotos&#10;D:\Archiv\2023&#10;E:\Handy"
+            rows="6"
+          ></textarea>
+          <small>Geben Sie absolute Pfade zu den Ordnern mit Fotos ein.</small>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="person-backend-select">Personen-Backend:</label>
+            <select id="person-backend-select" class="form-control">
+              <option value="">auto (Standard)</option>
+              <option value="insightface">InsightFace (schneller)</option>
+              <option value="histogram">Histogram (Fallback)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="index-workers-select">Worker-Threads:</label>
+            <select id="index-workers-select" class="form-control">
+              <option value="1" selected>1 (Single-threaded)</option>
+              <option value="2">2</option>
+              <option value="4">4</option>
+              <option value="8">8</option>
+              <option value="10">10</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group checkbox">
+            <input
+              type="checkbox"
+              id="force-reindex-check"
+              class="form-control"
+            />
+            <label for="force-reindex-check">Force Re-Index (alles neu verarbeiten)</label>
+          </div>
+
+          <div class="form-group checkbox">
+            <input
+              type="checkbox"
+              id="near-duplicates-check"
+              class="form-control"
+            />
+            <label for="near-duplicates-check">Nahe Duplikate erkennen (langsamer)</label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="phash-threshold-input">Phash-Schwelle (0-64):</label>
+          <input
+            type="number"
+            id="phash-threshold-input"
+            class="form-control"
+            value="6"
+            min="0"
+            max="64"
+          />
+          <small>Für Nahe Duplikate: niedrig = strenger. Standard: 6</small>
+        </div>
+
+        <div class="config-actions">
+          <button type="button" class="btn btn-primary" onclick="saveCurrentConfig(true)">💾 Einstellungen speichern</button>
+          <span id="config-save-status" class="config-save-status" aria-live="polite"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Operations Section -->
+    <section class="admin-section">
+      <h2>⚙️ Index-Operationen</h2>
+      <div class="operations-grid">
+        <div class="operation-card">
+          <h3>🔄 Full Indexierung</h3>
+          <p>Scannt alle Pfade und verarbeitet alle Bilder. Nutzt Skip-Logic für bereits indexierte Fotos (es sei denn, Force Re-Index ist aktiv).</p>
+          <button
+            class="btn btn-primary"
+            onclick="startFullIndex()"
+          >
+            Starten
+          </button>
+        </div>
+
+        <div class="operation-card">
+          <h3>📊 EXIF aktualisieren</h3>
+          <p>Aktualisiert nur die EXIF-Daten (Datum, GPS, Kamera-Info) für bereits indexierte Fotos. Schnell!</p>
+          <button
+            class="btn btn-secondary"
+            onclick="startExifUpdate()"
+          >
+            Starten
+          </button>
+        </div>
+
+        <div class="operation-card">
+          <h3>👤 Rematch Personen</h3>
+          <p>Berechnet Personen-Matching und Smile-Scores für alle indexierten Fotos neu. Nutzt existierende Embeddings.</p>
+          <div class="form-group">
+            <label for="rematch-workers-select">Worker:</label>
+            <select id="rematch-workers-select" class="form-control">
+              <option value="1" selected>1</option>
+              <option value="2">2</option>
+              <option value="4">4</option>
+              <option value="8">8</option>
+              <option value="10">10</option>
+            </select>
+          </div>
+          <button
+            class="btn btn-secondary"
+            onclick="startRematchPersons()"
+          >
+            Starten
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Jobs Section -->
+    <section class="admin-section">
+      <h2>📋 Laufende Jobs</h2>
+      <div id="jobs-container" class="jobs-container">
+        <p class="text-muted">Keine laufenden Jobs...</p>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- Job Progress Modal -->
+<div id="job-progress-modal" class="job-modal" onclick="closeJobModal(event)">
+  <div class="job-modal-content" onclick="event.stopPropagation()">
+    <h3 id="job-title">Job läuft...</h3>
+
+    <div class="job-info">
+      <p><strong>Status:</strong> <span id="job-status">RUNNING</span></p>
+      <p id="job-elapsed" style="display: none;"><strong>Laufzeit:</strong> <span id="job-elapsed-time">0 s</span></p>
+      <p id="job-message-row"><strong>Meldung:</strong> <span id="job-message">-</span></p>
+    </div>
+
+    <div class="progress-container">
+      <div class="progress-bar">
+        <div id="job-progress-fill" class="progress-fill" style="width: 0%;"></div>
+      </div>
+      <p class="progress-text">
+        <span id="job-progress-current">0</span> / <span id="job-progress-total">?</span>
+        (<span id="job-progress-percent">0</span>%)
+      </p>
+    </div>
+
+    <div class="job-error" id="job-error-box" style="display: none;">
+      <strong>Fehler:</strong> <span id="job-error-text"></span>
+    </div>
+
+    <div class="job-actions">
+      <button class="btn btn-danger" id="abort-btn" onclick="abortJob()">
+        ❌ Abbrechen
+      </button>
+      <button class="btn btn-secondary" id="close-btn" style="display: none;" onclick="closeJobModal()">
+        ✓ Schließen
+      </button>
+    </div>
+  </div>
+</div>
+
+<style>
+.admin-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.admin-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 30px;
+  border-bottom: 2px solid #e0e0e0;
+  padding-bottom: 15px;
+}
+
+.admin-header h1 {
+  margin: 0;
+  font-size: 28px;
+}
+
+.admin-nav {
+  display: flex;
+  gap: 15px;
+}
+
+.nav-link {
+  color: #007bff;
+  text-decoration: none;
+  padding: 8px 12px;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.nav-link:hover {
+  background-color: #f0f0f0;
+}
+
+.admin-content {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+
+.admin-section {
+  background: #f9f9f9;
+  padding: 20px;
+  border-radius: 6px;
+  border: 1px solid #e0e0e0;
+}
+
+.admin-section h2 {
+  margin-top: 0;
+  font-size: 20px;
+  margin-bottom: 15px;
+  color: #222;
+}
+
+.config-form {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.config-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.config-save-status {
+  font-size: 13px;
+  color: #2e7d32;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.form-group label {
+  font-weight: 600;
+  margin-bottom: 5px;
+  font-size: 14px;
+  color: #222;
+}
+
+.form-group small {
+  font-size: 12px;
+  color: #666;
+  margin-top: 3px;
+}
+
+.photo-roots-textarea {
+  padding: 10px;
+  border: 1px solid #999;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 13px;
+  resize: vertical;
+  color: #333;
+  background-color: #fff;
+}
+
+.form-control {
+  padding: 8px;
+  border: 1px solid #999;
+  border-radius: 4px;
+  font-size: 14px;
+  color: #333;
+  background-color: #fff;
+}
+
+.form-control:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 3px rgba(0, 123, 255, 0.3);
+  color: #333;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 15px;
+}
+
+.form-group.checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.form-group.checkbox input {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.form-group.checkbox label {
+  margin-bottom: 0;
+  font-weight: normal;
+}
+
+.operations-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+.operation-card {
+  background: white;
+  padding: 15px;
+  border-radius: 6px;
+  border: 1px solid #d0d0d0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.operation-card h3 {
+  margin: 0 0 10px 0;
+  font-size: 16px;
+  color: #222;
+}
+
+.operation-card p {
+  margin: 0 0 15px 0;
+  font-size: 13px;
+  color: #444;
+  line-height: 1.4;
+}
+
+.btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-primary {
+  background-color: #007bff;
+  color: white;
+}
+
+.btn-primary:hover {
+  background-color: #0056b3;
+}
+
+.btn-secondary {
+  background-color: #6c757d;
+  color: white;
+}
+
+.btn-secondary:hover {
+  background-color: #545b62;
+}
+
+.btn-danger {
+  background-color: #dc3545;
+  color: white;
+}
+
+.btn-danger:hover {
+  background-color: #c82333;
+}
+
+.jobs-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.job-list-item {
+  background: #fff;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  padding: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.job-list-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.job-list-title {
+  font-weight: 600;
+  color: #222;
+}
+
+.job-list-meta {
+  font-size: 12px;
+  color: #555;
+}
+
+.text-muted {
+  color: #999;
+  font-style: italic;
+}
+
+/* Job Progress Modal */
+.job-modal {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+  justify-content: center;
+  align-items: center;
+}
+
+.job-modal.active {
+  display: flex;
+}
+
+.job-modal-content {
+  background: white;
+  padding: 30px;
+  border-radius: 8px;
+  max-width: 500px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.3);
+}
+
+.job-modal-content h3 {
+  margin: 0 0 20px 0;
+  font-size: 22px;
+}
+
+.job-info {
+  background: #f5f5f5;
+  padding: 15px;
+  border-radius: 4px;
+  margin-bottom: 20px;
+  font-size: 14px;
+}
+
+.job-info p {
+  margin: 8px 0;
+}
+
+.progress-container {
+  margin: 20px 0;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 30px;
+  background-color: #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid #ccc;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #28a745, #20c997);
+  transition: width 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: bold;
+  font-size: 12px;
+}
+
+.progress-text {
+  margin: 8px 0 0 0;
+  font-size: 13px;
+  color: #666;
+  text-align: center;
+}
+
+.job-error {
+  background-color: #f8d7da;
+  border: 1px solid #f5c6cb;
+  color: #721c24;
+  padding: 12px;
+  border-radius: 4px;
+  margin-bottom: 20px;
+  font-size: 13px;
+}
+
+.job-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.job-actions .btn {
+  padding: 10px 15px;
+}
+
+@media (max-width: 768px) {
+  .admin-section {
+    padding: 15px;
+  }
+
+  .operations-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-header {
+    flex-direction: column;
+    gap: 15px;
+    align-items: flex-start;
+  }
+}
+</style>
+
+<script>
+let currentJobId = null;
+let jobPollInterval = null;
+let configSaveTimer = null;
+let jobsListInterval = null;
+
+function collectAdminConfig() {
+  return {
+    photo_roots: document.getElementById('photo-roots-input').value.trim().split('\n').filter(l => l.trim()),
+    person_backend: document.getElementById('person-backend-select').value || null,
+    force_reindex: document.getElementById('force-reindex-check').checked,
+    index_workers: parseInt(document.getElementById('index-workers-select').value),
+    near_duplicates: document.getElementById('near-duplicates-check').checked,
+    phash_threshold: parseInt(document.getElementById('phash-threshold-input').value),
+    rematch_workers: parseInt(document.getElementById('rematch-workers-select').value),
+  };
+}
+
+function applyAdminConfig(config) {
+  document.getElementById('photo-roots-input').value = (config.photo_roots || []).join('\n');
+  document.getElementById('person-backend-select').value = config.person_backend || '';
+  document.getElementById('force-reindex-check').checked = Boolean(config.force_reindex);
+  document.getElementById('index-workers-select').value = String(config.index_workers || 1);
+  document.getElementById('near-duplicates-check').checked = Boolean(config.near_duplicates);
+  document.getElementById('phash-threshold-input').value = String(config.phash_threshold ?? 6);
+  document.getElementById('rematch-workers-select').value = String(config.rematch_workers || 1);
+}
+
+async function loadAdminConfig() {
+  try {
+    const response = await fetch('/api/admin/config');
+    if (!response.ok) {
+      return;
+    }
+    const config = await response.json();
+    applyAdminConfig(config);
+  } catch (err) {
+    console.error('Fehler beim Laden der Admin-Konfiguration:', err);
+  }
+}
+
+async function saveAdminConfig(config) {
+  const response = await fetch('/api/admin/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  });
+  if (!response.ok) {
+    throw new Error('Konfiguration konnte nicht gespeichert werden');
+  }
+}
+
+function setConfigSaveStatus(message, isError = false) {
+  const statusEl = document.getElementById('config-save-status');
+  if (!statusEl) {
+    return;
+  }
+  statusEl.textContent = message;
+  statusEl.style.color = isError ? '#b71c1c' : '#2e7d32';
+}
+
+async function saveCurrentConfig(showFeedback = false) {
+  const config = collectAdminConfig();
+  try {
+    await saveAdminConfig(config);
+    if (showFeedback) {
+      setConfigSaveStatus('Einstellungen gespeichert.');
+    }
+  } catch (err) {
+    if (showFeedback) {
+      setConfigSaveStatus('Speichern fehlgeschlagen.', true);
+    }
+  }
+}
+
+function scheduleAutoSave() {
+  if (configSaveTimer) {
+    clearTimeout(configSaveTimer);
+  }
+  configSaveTimer = setTimeout(() => {
+    saveCurrentConfig(false);
+  }, 500);
+}
+
+function setupConfigAutoSave() {
+  const ids = [
+    'photo-roots-input',
+    'person-backend-select',
+    'index-workers-select',
+    'force-reindex-check',
+    'near-duplicates-check',
+    'phash-threshold-input',
+    'rematch-workers-select',
+  ];
+  ids.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) {
+      return;
+    }
+    el.addEventListener('input', scheduleAutoSave);
+    el.addEventListener('change', scheduleAutoSave);
+  });
+}
+
+function renderJobsList(jobs) {
+  const container = document.getElementById('jobs-container');
+  if (!container) {
+    return;
+  }
+
+  if (!jobs || !jobs.length) {
+    container.innerHTML = '<p class="text-muted">Keine laufenden Jobs...</p>';
+    return;
+  }
+
+  const sorted = [...jobs].sort((left, right) => {
+    return Number(right.elapsed_seconds || 0) - Number(left.elapsed_seconds || 0);
+  });
+
+  container.innerHTML = sorted.map((job) => {
+    const percentage = Math.round(Number(job.percentage || 0));
+    return `
+      <div class="job-list-item">
+        <div class="job-list-main">
+          <div class="job-list-title">${getJobTypeLabel(job.job_type)} - ${String(job.status || '').toUpperCase()}</div>
+          <div class="job-list-meta">${job.current || 0}/${job.total || 0} (${percentage}%) - ${job.message || '-'}</div>
+        </div>
+        <button class="btn btn-secondary" type="button" onclick="showJobProgress('${job.job_id}')">Details</button>
+      </div>
+    `;
+  }).join('');
+}
+
+async function refreshJobsList() {
+  try {
+    const response = await fetch('/api/admin/jobs');
+    if (!response.ok) {
+      return;
+    }
+    const jobs = await response.json();
+    renderJobsList(jobs);
+  } catch (err) {
+    console.error('Fehler beim Laden der Jobliste:', err);
+  }
+}
+
+function startJobsListPolling() {
+  refreshJobsList();
+  if (jobsListInterval) {
+    clearInterval(jobsListInterval);
+  }
+  jobsListInterval = setInterval(refreshJobsList, 2000);
+}
+
+async function startFullIndex() {
+  const config = collectAdminConfig();
+  const roots = config.photo_roots;
+  if (!roots.length) {
+    alert('Bitte mindestens einen Foto-Pfad eingeben');
+    return;
+  }
+
+  const payload = {
+    ...config,
+    photo_roots: roots,
+  };
+
+  try {
+    await saveAdminConfig(config);
+    const response = await fetch('/api/admin/config/start-index', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      alert(`Fehler: ${error.error}`);
+      return;
+    }
+
+    const data = await response.json();
+    showJobProgress(data.job_id);
+  } catch (err) {
+    alert(`Fehler: ${err.message}`);
+  }
+}
+
+async function startExifUpdate() {
+  try {
+    const response = await fetch('/api/admin/config/start-exif', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      alert(`Fehler: ${error.error}`);
+      return;
+    }
+
+    const data = await response.json();
+    showJobProgress(data.job_id);
+  } catch (err) {
+    alert(`Fehler: ${err.message}`);
+  }
+}
+
+async function startRematchPersons() {
+  const config = collectAdminConfig();
+  const payload = {
+    person_backend: config.person_backend,
+    workers: config.rematch_workers,
+  };
+
+  try {
+    await saveAdminConfig(config);
+    const response = await fetch('/api/admin/config/start-rematch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      alert(`Fehler: ${error.error}`);
+      return;
+    }
+
+    const data = await response.json();
+    showJobProgress(data.job_id);
+  } catch (err) {
+    alert(`Fehler: ${err.message}`);
+  }
+}
+
+function showJobProgress(jobId) {
+  currentJobId = jobId;
+  document.getElementById('job-progress-modal').classList.add('active');
+
+  // Reset UI
+  document.getElementById('abort-btn').style.display = 'block';
+  document.getElementById('close-btn').style.display = 'none';
+  document.getElementById('job-error-box').style.display = 'none';
+  document.getElementById('job-elapsed').style.display = 'none';
+
+  // Poll für Updates
+  pollJobStatus();
+  jobPollInterval = setInterval(pollJobStatus, 500);
+  refreshJobsList();
+}
+
+async function pollJobStatus() {
+  if (!currentJobId) return;
+
+  try {
+    const response = await fetch(`/api/admin/job/${currentJobId}`);
+    if (!response.ok) return;
+
+    const job = await response.json();
+
+    document.getElementById('job-title').textContent = `${getJobTypeLabel(job.job_type)} - ${job.status}`;
+    document.getElementById('job-status').textContent = job.status.toUpperCase();
+    document.getElementById('job-message').textContent = job.message || '-';
+    document.getElementById('job-progress-current').textContent = job.current;
+    document.getElementById('job-progress-total').textContent = job.total;
+    document.getElementById('job-progress-percent').textContent = Math.round(job.percentage);
+    document.getElementById('job-progress-fill').style.width = `${job.percentage}%`;
+
+    // Zeige Laufzeit
+    if (job.elapsed_seconds !== undefined) {
+      document.getElementById('job-elapsed').style.display = 'block';
+      document.getElementById('job-elapsed-time').textContent = formatSeconds(job.elapsed_seconds);
+    }
+
+    // Wenn fertig: Update UI
+    if (job.status !== 'running') {
+      clearInterval(jobPollInterval);
+      document.getElementById('abort-btn').style.display = 'none';
+      document.getElementById('close-btn').style.display = 'block';
+
+      if (job.status === 'failed' && job.error) {
+        document.getElementById('job-error-box').style.display = 'block';
+        document.getElementById('job-error-text').textContent = job.error;
+      }
+      refreshJobsList();
+    }
+  } catch (err) {
+    console.error('Fehler beim Abrufen des Job-Status:', err);
+  }
+}
+
+async function abortJob() {
+  if (!currentJobId) return;
+
+  try {
+    const response = await fetch(`/api/admin/job/${currentJobId}/abort`, {
+      method: 'POST',
+    });
+
+    if (response.ok) {
+      alert('Abbruch angefordert...');
+    } else {
+      alert('Abbruch fehlgeschlagen');
+    }
+  } catch (err) {
+    alert(`Fehler: ${err.message}`);
+  }
+}
+
+function closeJobModal(event) {
+  if (event && event.target.id !== 'job-progress-modal') return;
+
+  document.getElementById('job-progress-modal').classList.remove('active');
+  if (jobPollInterval) {
+    clearInterval(jobPollInterval);
+  }
+  currentJobId = null;
+}
+
+function getJobTypeLabel(jobType) {
+  const labels = {
+    'full_index': '🔄 Full Indexierung',
+    'exif_update': '📊 EXIF-Update',
+    'rematch_persons': '👤 Rematch Personen',
+    'train_reference_person': '🧠 Person anlernen',
+  };
+  return labels[jobType] || jobType;
+}
+
+function formatSeconds(seconds) {
+  const hrs = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+
+  if (hrs > 0) return `${hrs}h ${mins}m ${secs}s`;
+  if (mins > 0) return `${mins}m ${secs}s`;
+  return `${secs}s`;
+}
+
+// Lade Konfiguration beim Start
+window.addEventListener('load', () => {
+  loadAdminConfig();
+  setupConfigAutoSave();
+  startJobsListPolling();
+});
+</script>
+{% endblock %}
+

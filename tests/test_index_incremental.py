@@ -13,11 +13,41 @@ if str(PROJECT_ROOT) not in sys.path:
 import src.app.cli as cli_module  # noqa: E402
 from src.app.cli import _index_command  # noqa: E402
 from src.app.config import AppConfig  # noqa: E402
-from src.app.index.store import ensure_schema, get_photo_metadata_map  # noqa: E402
+from src.app.index.store import ensure_schema, get_admin_config, get_photo_metadata_map, save_admin_config  # noqa: E402
 from src.app.ingest import ImageRecord  # noqa: E402
 
 
 class IncrementalIndexTests(unittest.TestCase):
+    def test_admin_config_defaults_and_roundtrip(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            workspace = Path(tmp_dir)
+            db_path = workspace / "data" / "photo_index.db"
+            ensure_schema(db_path)
+
+            defaults = get_admin_config(db_path)
+            self.assertEqual(defaults["photo_roots"], [])
+            self.assertEqual(defaults["index_workers"], 1)
+            self.assertEqual(defaults["phash_threshold"], 6)
+
+            saved = save_admin_config(
+                db_path,
+                {
+                    "photo_roots": ["D:/Fotos", "C:/Users/heiko/Pictures/iCloud Photos"],
+                    "person_backend": "insightface",
+                    "index_workers": 10,
+                    "rematch_workers": 8,
+                    "force_reindex": True,
+                },
+            )
+
+            self.assertEqual(saved["person_backend"], "insightface")
+            self.assertEqual(saved["index_workers"], 10)
+            self.assertTrue(saved["force_reindex"])
+
+            loaded = get_admin_config(db_path)
+            self.assertEqual(loaded["photo_roots"], ["D:/Fotos", "C:/Users/heiko/Pictures/iCloud Photos"])
+            self.assertEqual(loaded["rematch_workers"], 8)
+
     def test_get_photo_metadata_map_returns_existing_rows(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             workspace = Path(tmp_dir)

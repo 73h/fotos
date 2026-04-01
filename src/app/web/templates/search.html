@@ -13,12 +13,7 @@
     >
       <input type="text" name="q" value="{{ query }}" placeholder="z. B. hund strand person:max month:3 year:2023" />
       <input type="number" name="per_page" value="{{ per_page }}" min="1" max="200" />
-      <select name="album_id" id="album-filter-select" onchange="document.getElementById('search-form').requestSubmit()">
-        <option value="">Alle Alben</option>
-        {% for album in albums %}
-        <option value="{{ album.id }}" {% if album.active %}selected{% endif %}>{{ album.name }} ({{ album.photo_count }})</option>
-        {% endfor %}
-      </select>
+      <input type="hidden" name="album_id" value="{{ active_album_id if active_album_id else '' }}" />
       <select name="person_id" id="person-filter-select" onchange="filterByPerson()">
         <option value="">Alle Personen</option>
         {% for person in persons %}
@@ -42,31 +37,40 @@
         <option value="12">Dezember</option>
       </select>
 
-      <input type="number" id="year-filter-input" placeholder="Jahr (z. B. 2023)" min="1900" max="2100" style="width: 140px;" onchange="updateDateFilter()" />
-
-      <label class="filter-solo" title="Nur Bilder anzeigen, auf denen genau eine Person erkannt wurde">
-        <input
-          type="checkbox"
-          id="solo-toggle"
-          onchange="document.getElementById('max-persons-input').value = this.checked ? '1' : ''"
-          {% if max_persons == 1 %}checked{% endif %}
-        />
-        Solo
-      </label>
-      <input type="hidden" name="max_persons" id="max-persons-input" value="{{ max_persons if max_persons else '' }}" />
+      <input type="number" id="year-filter-input" placeholder="Jahr (z. B. 2023)" min="1900" max="2100" style="width: 120px;" onchange="updateDateFilter()" />
+      <input
+        type="number"
+        name="person_count"
+        id="person-count-input"
+        value="{{ person_count if person_count else '' }}"
+        min="1"
+        max="50"
+        placeholder="Personenzahl"
+        title="Zeigt nur Bilder mit genau dieser Anzahl erkannter Personen"
+        style="width: 100px;"
+      />
       <button type="submit">Suchen</button>
+      <a class="search-reset-link" href="{{ url_for('web.home') }}">Zurücksetzen</a>
       <span id="loading" class="loading">Lade...</span>
 
       <!-- Hamburger Menu -->
       <div class="menu-container">
-        <button id="menu-toggle" class="menu-toggle" onclick="toggleMenu(event)" aria-label="Menü">
+        <button type="button" id="menu-toggle" class="menu-toggle" onclick="toggleMenu(event)" aria-label="Menü">
           <span></span>
           <span></span>
           <span></span>
         </button>
         <nav id="menu-dropdown" class="menu-dropdown">
-          <a href="{{ url_for('web.map_view', q=query, album_id=active_album_id, max_persons=max_persons) }}" class="menu-item">
+          <a
+            id="open-map-link"
+            href="{{ url_for('web.map_view', q=query, album_id=active_album_id, person_count=person_count) }}"
+            data-base-url="{{ url_for('web.map_view') }}"
+            class="menu-item"
+          >
             🗺️ Karte öffnen
+          </a>
+          <a href="{{ url_for('web.admin_page') }}" class="menu-item">
+            🔧 Admin-Dashboard
           </a>
         </nav>
       </div>
@@ -77,7 +81,7 @@
       Albumfilter aktiv: <strong>{{ active_album_name }}</strong>
       <a
         class="clear-filter-link"
-        href="{{ url_for('web.home', q=query, per_page=per_page, max_persons=max_persons) }}"
+        href="{{ url_for('web.home', q=query, per_page=per_page, person_count=person_count) }}"
       >
         Filter entfernen
       </a>
