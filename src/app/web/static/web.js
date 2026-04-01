@@ -255,6 +255,163 @@
   window.removePhotoFromAlbum = removePhotoFromAlbum;
   window.filterByPerson = filterByPerson;
 
+  // Photo Modal functions
+  async function openPhotoModal(photoToken) {
+    const modal = document.getElementById("photo-modal");
+    const photoImg = document.getElementById("modal-photo");
+    const detailsDiv = document.getElementById("modal-details");
+
+    if (!modal || !photoImg || !detailsDiv) return;
+
+    // Set image URL
+    photoImg.src = `/photo/${photoToken}`;
+
+    // Load details
+    detailsDiv.innerHTML = '<div class="details-loading">Lade Details...</div>';
+
+    try {
+      const response = await fetch(`/api/photo-details/${photoToken}`);
+      if (!response.ok) {
+        detailsDiv.innerHTML = '<div class="details-loading">Fehler beim Laden der Details.</div>';
+        return;
+      }
+
+      const data = await response.json();
+      detailsDiv.innerHTML = buildDetailsHTML(data);
+    } catch (error) {
+      console.error("Error loading photo details:", error);
+      detailsDiv.innerHTML = '<div class="details-loading">Fehler beim Laden der Details.</div>';
+    }
+
+    modal.classList.add("active");
+    document.body.style.overflow = "hidden";
+  }
+
+  function closePhotoModal(event) {
+    // Wenn event vorhanden ist und nicht auf modal selbst geklickt wurde, return
+    if (event && event.target.id !== "photo-modal") {
+      return;
+    }
+
+    const modal = document.getElementById("photo-modal");
+    if (modal) {
+      modal.classList.remove("active");
+      document.body.style.overflow = "";
+    }
+  }
+
+  function buildDetailsHTML(data) {
+    const sections = [];
+
+    // File Info Section
+    if (data.file_info) {
+      sections.push(buildSection("Dateiinformationen", [
+        { label: "Pfad", value: data.file_info.path, code: true },
+        { label: "Größe", value: formatFileSize(data.file_info.size_bytes) },
+        { label: "Geändert", value: new Date(data.file_info.modified_ts * 1000).toLocaleString('de-DE') },
+      ]));
+    }
+
+    // Image Info Section
+    if (data.image_info) {
+      sections.push(buildSection("Bildinformationen", [
+        { label: "Auflösung", value: data.image_info.width && data.image_info.height ? `${data.image_info.width} x ${data.image_info.height}` : "-" },
+        { label: "Format", value: data.image_info.format || "-" },
+      ]));
+    }
+
+    // Labels Section
+    if (data.labels && data.labels.length > 0) {
+      sections.push(`
+        <div class="detail-section">
+          <div class="detail-section-title">Labels</div>
+          <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+            ${data.labels.map(label => `<span style="background: #1f2c3d; padding: 3px 8px; border-radius: 4px; font-size: 11px; color: #9ec3ff;">${escapeHtml(label)}</span>`).join('')}
+          </div>
+        </div>
+      `);
+    }
+
+    // EXIF Data Section
+    if (data.exif && Object.keys(data.exif).length > 0) {
+      const exifRows = [];
+
+      // Camera Info
+      if (data.exif.camera_make || data.exif.camera_model) {
+        exifRows.push({ label: "Kamera", value: [data.exif.camera_make, data.exif.camera_model].filter(Boolean).join(" ") });
+      }
+      if (data.exif.lens) {
+        exifRows.push({ label: "Objektiv", value: data.exif.lens });
+      }
+
+      // Photo Settings
+      if (data.exif.focal_length) {
+        exifRows.push({ label: "Brennweite", value: data.exif.focal_length });
+      }
+      if (data.exif.f_number) {
+        exifRows.push({ label: "Blende", value: data.exif.f_number });
+      }
+      if (data.exif.exposure_time) {
+        exifRows.push({ label: "Belichtungszeit", value: data.exif.exposure_time });
+      }
+      if (data.exif.iso) {
+        exifRows.push({ label: "ISO", value: data.exif.iso.toString() });
+      }
+
+      // Date/Time
+      if (data.exif.datetime) {
+        exifRows.push({ label: "Aufnahmedatum", value: new Date(data.exif.datetime * 1000).toLocaleString('de-DE') });
+      }
+
+      // Location
+      if (data.exif.latitude && data.exif.longitude) {
+        exifRows.push({
+          label: "Koordinaten",
+          value: `${data.exif.latitude.toFixed(6)}, ${data.exif.longitude.toFixed(6)}`
+        });
+      }
+
+      if (exifRows.length > 0) {
+        sections.push(buildSection("EXIF-Daten", exifRows));
+      }
+    }
+
+    return sections.join('');
+  }
+
+  function buildSection(title, rows) {
+    const rowsHTML = rows.map(row => `
+      <div class="detail-row">
+        <div class="detail-label">${escapeHtml(row.label)}</div>
+        <div class="detail-value${row.code ? ' code' : ''}">${escapeHtml(row.value)}</div>
+      </div>
+    `).join('');
+
+    return `
+      <div class="detail-section">
+        <div class="detail-section-title">${escapeHtml(title)}</div>
+        ${rowsHTML}
+      </div>
+    `;
+  }
+
+  function formatFileSize(bytes) {
+    if (bytes === 0) return "0 Bytes";
+    const k = 1024;
+    const sizes = ["Bytes", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
+  }
+
+  function escapeHtml(text) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  window.openPhotoModal = openPhotoModal;
+  window.closePhotoModal = closePhotoModal;
+
   document.addEventListener("DOMContentLoaded", () => initAlbumDragDrop(document));
   document.body.addEventListener("htmx:afterSwap", () => initAlbumDragDrop(document));
 })();

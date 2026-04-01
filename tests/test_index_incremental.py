@@ -46,6 +46,7 @@ class IncrementalIndexTests(unittest.TestCase):
             metadata = get_photo_metadata_map(db_path=db_path, paths=[image_path])
             self.assertIn(str(image_path), metadata)
             self.assertEqual(metadata[str(image_path)][0], stat.st_size)
+            self.assertTrue(metadata[str(image_path)][2])
 
     def test_index_skips_unchanged_files_on_reindex(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
@@ -156,6 +157,71 @@ class IncrementalIndexTests(unittest.TestCase):
 
             self.assertGreaterEqual(len(rows), 1)
             self.assertEqual(rows[0][2], "exact")
+
+    def test_index_reprocesses_legacy_rows_without_exif_backfill(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            workspace = Path(tmp_dir)
+            photos_dir = workspace / "photos"
+            photos_dir.mkdir(parents=True, exist_ok=True)
+
+            image_path = photos_dir / "legacy.jpg"
+            image = Image.new("RGB", (128, 80), color=(100, 130, 160))
+            image.save(image_path)
+
+            config = AppConfig.from_workspace(workspace_root=workspace)
+            db_path = config.resolve_db_path()
+            ensure_schema(db_path)
+
+            stat = image_path.stat()
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO photos (
+                        path, size_bytes, modified_ts, sha1, labels_json, search_blob, person_count, exif_checked
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                    """,
+                    (
+                        str(image_path),
+                        stat.st_size,
+                        stat.st_mtime,
+                        "legacy-sha1",
+                        '["legacy"]',
+                        "legacy",
+                        0,
+                    ),
+                )
+
+            calls = {"labels": 0, "match": 0}
+            original_infer = cli_module.infer_labels_from_path
+            original_match = cli_module.match_persons_for_photo
+
+            def fake_infer_labels(path: Path) -> list[str]:
+                calls["labels"] += 1
+                return ["legacy"]
+
+            def fake_match(*args, **kwargs) -> tuple[list[object], int]:
+                calls["match"] += 1
+                return [], 0
+
+            cli_module.infer_labels_from_path = fake_infer_labels
+            cli_module.match_persons_for_photo = fake_match
+
+            try:
+                rc = _index_command(
+                    config=config,
+                    roots=[photos_dir],
+                    custom_db_path=None,
+                    person_backend=None,
+                )
+                self.assertEqual(rc, 0)
+                self.assertEqual(calls["labels"], 1)
+                self.assertEqual(calls["match"], 1)
+
+                metadata = get_photo_metadata_map(db_path=db_path, paths=[image_path])
+                self.assertTrue(metadata[str(image_path)][2])
+            finally:
+                cli_module.infer_labels_from_path = original_infer
+                cli_module.match_persons_for_photo = original_match
 
 
 if __name__ == "__main__":

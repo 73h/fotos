@@ -1,6 +1,7 @@
 import hashlib
 import json
 import sqlite3
+from fractions import Fraction
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,6 +22,16 @@ class IndexedPhoto:
     person_count: int = 0
 
 
+def _make_json_serializable(obj):
+    if isinstance(obj, Fraction):
+        return float(obj)
+    if isinstance(obj, dict):
+        return {key: _make_json_serializable(value) for key, value in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_make_json_serializable(value) for value in obj]
+    return obj
+
+
 def ensure_schema(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(db_path) as conn:
@@ -39,7 +50,8 @@ def ensure_schema(db_path: Path) -> None:
                 labels_json TEXT NOT NULL,
                 search_blob TEXT NOT NULL,
                 person_count INTEGER NOT NULL DEFAULT 0,
-                exif_json TEXT
+                exif_json TEXT,
+                exif_checked INTEGER NOT NULL DEFAULT 0
             )
             """
         )
@@ -143,6 +155,17 @@ def ensure_schema(db_path: Path) -> None:
             conn.execute("ALTER TABLE photos ADD COLUMN taken_ts REAL")
         if "exif_json" not in existing_photo_columns:
             conn.execute("ALTER TABLE photos ADD COLUMN exif_json TEXT")
+        if "exif_checked" not in existing_photo_columns:
+            conn.execute("ALTER TABLE photos ADD COLUMN exif_checked INTEGER NOT NULL DEFAULT 0")
+
+        conn.execute(
+            """
+            UPDATE photos
+            SET exif_checked = 1
+            WHERE exif_checked = 0
+              AND (exif_json IS NOT NULL OR taken_ts IS NOT NULL)
+            """
+        )
         
         # Erstelle Indizes nach allen Migrationen
         conn.execute("CREATE INDEX IF NOT EXISTS idx_photos_taken_ts ON photos(taken_ts)")
@@ -262,7 +285,7 @@ def upsert_photo(
             if v is not None
         }
         if exif_dict:
-            exif_json = json.dumps(exif_dict)
+            exif_json = json.dumps(_make_json_serializable(exif_dict))
 
     with sqlite3.connect(db_path) as conn:
         conn.execute(
@@ -280,9 +303,10 @@ def upsert_photo(
                 labels_json,
                 search_blob,
                 person_count,
-                exif_json
+                exif_json,
+                exif_checked
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
                 size_bytes=excluded.size_bytes,
                 modified_ts=excluded.modified_ts,
@@ -295,7 +319,8 @@ def upsert_photo(
                 labels_json=excluded.labels_json,
                 search_blob=excluded.search_blob,
                 person_count=excluded.person_count,
-                exif_json=excluded.exif_json
+                exif_json=excluded.exif_json,
+                exif_checked=excluded.exif_checked
             """,
             (
                 str(record.path),
@@ -311,6 +336,7 @@ def upsert_photo(
                 search_blob,
                 person_count,
                 exif_json,
+                1,
             ),
         )
 
@@ -318,12 +344,12 @@ def upsert_photo(
 def get_photo_metadata_map(
     db_path: Path,
     paths: list[Path],
-) -> dict[str, tuple[int, float]]:
+) -> dict[str, tuple[int, float, bool]]:
     if not paths or not db_path.exists():
         return {}
 
     path_strings = [str(path) for path in paths]
-    metadata_by_path: dict[str, tuple[int, float]] = {}
+    metadata_by_path: dict[str, tuple[int, float, bool]] = {}
     chunk_size = 900
 
     with sqlite3.connect(db_path) as conn:
@@ -331,13 +357,13 @@ def get_photo_metadata_map(
             chunk = path_strings[start : start + chunk_size]
             placeholders = ",".join("?" for _ in chunk)
             sql = f"""
-                SELECT path, size_bytes, modified_ts
+                SELECT path, size_bytes, modified_ts, exif_checked
                 FROM photos
                 WHERE path IN ({placeholders})
             """
             rows = conn.execute(sql, chunk).fetchall()
             for row in rows:
-                metadata_by_path[row[0]] = (int(row[1]), float(row[2]))
+                metadata_by_path[row[0]] = (int(row[1]), float(row[2]), bool(row[3]))
 
     return metadata_by_path
 
@@ -427,18 +453,6 @@ def update_exif_only(db_path: Path, photo_paths: list[Path] | None = None) -> in
         return 0
 
     from ..ingest import _extract_exif_data
-    from fractions import Fraction
-
-    def make_json_serializable(obj):
-        """Konvertiert nicht-serialisierbare Objekte zu JSON-kompatiblen Typen."""
-        if isinstance(obj, Fraction):
-            return float(obj)
-        elif isinstance(obj, dict):
-            return {k: make_json_serializable(v) for k, v in obj.items()}
-        elif isinstance(obj, (list, tuple)):
-            return [make_json_serializable(v) for v in obj]
-        return obj
-
     with sqlite3.connect(db_path) as conn:
         # Hole alle Fotos aus der Datenbank
         if photo_paths:
@@ -462,26 +476,23 @@ def update_exif_only(db_path: Path, photo_paths: list[Path] | None = None) -> in
         # Extrahiere EXIF-Daten
         exif_data = _extract_exif_data(photo_path)
 
-        if not exif_data or not any(exif_data.__dict__.values()):
-            continue
-
-        # Konvertiere zu JSON-serialisierbarem Format
         exif_dict = {
             k: v for k, v in exif_data.__dict__.items()
             if v is not None
         }
-        exif_dict = make_json_serializable(exif_dict)
+        exif_dict = _make_json_serializable(exif_dict)
         exif_json = json.dumps(exif_dict) if exif_dict else None
+        taken_ts = exif_data.taken_ts if exif_dict else None
 
         # Aktualisiere in Datenbank
         with sqlite3.connect(db_path) as conn:
             conn.execute(
                 """
                 UPDATE photos
-                SET taken_ts = ?, exif_json = ?
+                SET taken_ts = ?, exif_json = ?, exif_checked = 1
                 WHERE path = ?
                 """,
-                (exif_data.taken_ts, exif_json, photo_path_str)
+                (taken_ts, exif_json, photo_path_str)
             )
             updated_count += 1
 
@@ -513,24 +524,22 @@ def search_photos_by_location(
     
     # Erde-Radius in km
     earth_radius_km = 6371.0
-    
-    # Berechne die Bounding Box in Grad (vereinfacht)
+    # Berechne die Bounding Box in Grad
+    from math import cos, radians
+
     lat_delta = (radius_km / earth_radius_km) * (180 / 3.14159)
-    lon_delta = (radius_km / earth_radius_km) * (180 / 3.14159) / (lat_delta / lat_delta if lat_delta else 1)
-    
-    min_lat = latitude - lat_delta
-    max_lat = latitude + lat_delta
-    min_lon = longitude - lon_delta
-    max_lon = longitude + lon_delta
-    
+    lon_divisor = max(0.01, cos(radians(latitude)))
+    lon_delta = lat_delta / lon_divisor
+
     with sqlite3.connect(db_path) as conn:
-        # Hole Fotos mit gültigen GPS-Daten in der Bounding Box
         rows = conn.execute(
             """
             SELECT path, labels_json, size_bytes, modified_ts,
-                   duplicate_of_path, duplicate_kind, duplicate_score, person_count
+                   duplicate_of_path, duplicate_kind, duplicate_score, person_count,
+                   exif_json
             FROM photos
-            WHERE exif_json IS NOT NULL
+            WHERE json_extract(exif_json, '$.latitude') IS NOT NULL
+              AND json_extract(exif_json, '$.longitude') IS NOT NULL
             LIMIT ?
             """,
             (limit * 2,)  # Hole mehr um zu filtern
@@ -541,7 +550,7 @@ def search_photos_by_location(
     items = []
     for row in rows:
         try:
-            exif_json = row[8] if len(row) > 8 else None
+            exif_json = row[8]
             if not exif_json:
                 continue
             

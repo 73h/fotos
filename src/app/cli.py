@@ -165,8 +165,12 @@ def _index_command(
         for record in images:
             previous_metadata = existing_metadata.get(str(record.path))
             if previous_metadata is not None:
-                previous_size, previous_modified_ts = previous_metadata
-                if previous_size == record.size_bytes and previous_modified_ts == record.modified_ts:
+                previous_size, previous_modified_ts, exif_checked = previous_metadata
+                if (
+                    previous_size == record.size_bytes
+                    and previous_modified_ts == record.modified_ts
+                    and exif_checked
+                ):
                     total_skipped += 1
                     continue
             to_process.append(record)

@@ -5,7 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Foto-Karte</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.js"></script>
     <style>
         * {
             margin: 0;
@@ -65,6 +69,19 @@
             background: #0056b3;
         }
 
+        .controls button.is-secondary,
+        .controls a.is-secondary {
+            background: #fff;
+            color: #333;
+            border: 1px solid #ddd;
+            text-decoration: none;
+        }
+
+        .controls button.is-active {
+            background: #198754;
+            border-color: #198754;
+        }
+
         #map {
             position: absolute;
             top: 0;
@@ -91,6 +108,16 @@
         .photo-count {
             color: #666;
             font-size: 0.9rem;
+        }
+
+        .status-line {
+            margin-top: 0.75rem;
+            color: #555;
+            font-size: 0.92rem;
+        }
+
+        .status-line strong {
+            color: #222;
         }
 
         .leaflet-popup-content {
@@ -120,19 +147,42 @@
 <body>
     <header>
         <h1>🗺️ Foto-Karte</h1>
-        <p>Alle Fotos mit GPS-Daten auf der Karte</p>
+        <p>Fotos mit GPS-Daten auf der Karte – inklusive Ortssuche, Cluster und Heatmap.</p>
         <div class="controls">
+            <a
+                href="{{ url_for('web.home', q=query, album_id=active_album_id, max_persons=max_persons) }}"
+                class="is-secondary"
+                style="padding: 0.5rem 1rem; border-radius: 4px;"
+            >
+                Zur Suche
+            </a>
             <input
                 type="text"
+                id="placeInput"
+                placeholder="Ort suchen, z. B. Prag oder Tegernsee"
+                style="min-width: 260px;"
+            />
+            <input
+                type="number"
                 id="radiusInput"
                 placeholder="Radius (km)"
                 value="5"
                 style="width: 120px;"
             />
+            <button type="button" onclick="searchPlace()">Ort suchen</button>
+            <button type="button" class="is-secondary" onclick="clearPlaceFilter()">Ortsfilter zurücksetzen</button>
             <button onclick="fitToPhotos()">Auf Fotos zoomen</button>
+            <button id="markersModeBtn" type="button" class="is-active" onclick="setMapMode('markers')">Marker</button>
+            <button id="heatmapModeBtn" type="button" class="is-secondary" onclick="setMapMode('heatmap')">Heatmap</button>
             <span class="photo-count">
-                <span id="photoCount">0</span> Fotos mit GPS-Daten
+                <span id="photoCount">0</span> geladene GPS-Fotos,
+                <span id="visiblePhotoCount">0</span> sichtbar
             </span>
+        </div>
+        <div class="status-line">
+            Aktive Datenbasis:
+            <strong id="activeFilterSummary">alle GPS-Fotos</strong>
+            <span id="placeSummary"></span>
         </div>
     </header>
 
@@ -141,6 +191,12 @@
     </div>
 
     <script>
+        const initialFilters = {
+            q: {{ query|tojson }},
+            album_id: {{ active_album_id|tojson }},
+            max_persons: {{ max_persons|tojson }},
+        };
+
         // Initialisiere die Karte (Zentrum auf Europa)
         const map = L.map("map").setView([50, 10], 4);
 
@@ -150,55 +206,245 @@
             maxZoom: 19,
         }).addTo(map);
 
+        let markerLayer = L.markerClusterGroup();
+        map.addLayer(markerLayer);
+        let heatLayer = null;
         let markers = [];
         let photos = [];
+        let filteredPhotos = [];
+        let hasAutoFit = false;
+        let mapMode = "markers";
+        let activePlace = null;
+        let activeCircle = null;
+        let activePlaceMarker = null;
+
+        function buildApiUrl() {
+            const url = new URL("/api/photos-with-location", window.location.origin);
+            url.searchParams.set("limit", "50000");
+            if (initialFilters.q) {
+                url.searchParams.set("q", initialFilters.q);
+            }
+            if (initialFilters.album_id) {
+                url.searchParams.set("album_id", initialFilters.album_id);
+            }
+            if (initialFilters.max_persons) {
+                url.searchParams.set("max_persons", initialFilters.max_persons);
+            }
+            return url.toString();
+        }
+
+        function haversineKm(lat1, lon1, lat2, lon2) {
+            const earthRadiusKm = 6371.0;
+            const toRad = (value) => value * Math.PI / 180;
+            const dLat = toRad(lat2 - lat1);
+            const dLon = toRad(lon2 - lon1);
+            const a = Math.sin(dLat / 2) ** 2
+                + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return earthRadiusKm * c;
+        }
+
+        function renderPlaceOverlay() {
+            if (activeCircle) {
+                map.removeLayer(activeCircle);
+                activeCircle = null;
+            }
+            if (activePlaceMarker) {
+                map.removeLayer(activePlaceMarker);
+                activePlaceMarker = null;
+            }
+
+            if (!activePlace) {
+                document.getElementById("placeSummary").textContent = "";
+                return;
+            }
+
+            activePlaceMarker = L.marker([activePlace.lat, activePlace.lon]).addTo(map);
+            activePlaceMarker.bindPopup(`<strong>${activePlace.name}</strong>`);
+            activeCircle = L.circle([activePlace.lat, activePlace.lon], {
+                radius: activePlace.radiusKm * 1000,
+                color: "#007bff",
+                weight: 1,
+                fillColor: "#007bff",
+                fillOpacity: 0.08,
+            }).addTo(map);
+
+            document.getElementById("placeSummary").textContent = ` · Ortsfilter: ${activePlace.name} (${activePlace.radiusKm} km)`;
+        }
+
+        function updateFilterSummary() {
+            const parts = [];
+            if (initialFilters.q) {
+                parts.push(`Suche: ${initialFilters.q}`);
+            }
+            if (initialFilters.album_id) {
+                parts.push(`Album-ID: ${initialFilters.album_id}`);
+            }
+            if (initialFilters.max_persons) {
+                parts.push(`max. Personen: ${initialFilters.max_persons}`);
+            }
+            document.getElementById("activeFilterSummary").textContent = parts.length ? parts.join(" · ") : "alle GPS-Fotos";
+        }
+
+        function getRadiusKm() {
+            const parsed = Number(document.getElementById("radiusInput").value || 5);
+            return Number.isFinite(parsed) && parsed > 0 ? parsed : 5;
+        }
+
+        function applyPlaceFilter() {
+            if (!activePlace) {
+                filteredPhotos = [...photos];
+            } else {
+                filteredPhotos = photos.filter((photo) => (
+                    haversineKm(activePlace.lat, activePlace.lon, photo.latitude, photo.longitude) <= activePlace.radiusKm
+                ));
+            }
+            renderPhotos(filteredPhotos);
+        }
+
+        function buildPopup(photo) {
+            return L.popup().setContent(`
+                <div class="popup-title">${photo.path.split(/[/\\]/).pop()}</div>
+                <img src="${photo.thumb_url}" alt="Thumbnail" class="popup-image" onclick="window.open('${photo.image_url}', '_blank')" />
+                <div class="popup-info">
+                    <div><strong>Kamera:</strong> ${photo.camera}</div>
+                    <div><strong>Lat:</strong> ${photo.latitude.toFixed(4)}</div>
+                    <div><strong>Lon:</strong> ${photo.longitude.toFixed(4)}</div>
+                    <div><strong>Aufnahme:</strong> ${photo.captured_ts ? new Date(photo.captured_ts * 1000).toLocaleDateString("de-DE") : "-"}</div>
+                </div>
+            `);
+        }
+
+        function renderPhotos(photoItems) {
+            markerLayer.clearLayers();
+            markers = [];
+
+            if (heatLayer) {
+                map.removeLayer(heatLayer);
+                heatLayer = null;
+            }
+
+            if (mapMode === "heatmap") {
+                const heatData = photoItems.map((photo) => [photo.latitude, photo.longitude, 0.5]);
+                heatLayer = L.heatLayer(heatData, {
+                    radius: 22,
+                    blur: 16,
+                    maxZoom: 13,
+                }).addTo(map);
+            } else {
+                photoItems.forEach((photo) => {
+                    const marker = L.marker([photo.latitude, photo.longitude]).bindPopup(buildPopup(photo));
+                    markerLayer.addLayer(marker);
+                    markers.push(marker);
+                });
+            }
+
+            document.getElementById("photoCount").textContent = photos.length;
+            document.getElementById("visiblePhotoCount").textContent = photoItems.length;
+            renderPlaceOverlay();
+
+            if (!hasAutoFit && photoItems.length > 0) {
+                fitToPhotos();
+                hasAutoFit = true;
+            }
+        }
 
         async function loadPhotos() {
             try {
-                const response = await fetch("/api/photos-with-location");
+                const response = await fetch(buildApiUrl());
                 const data = await response.json();
                 photos = data.photos;
-
-                // Lösche alte Marker
-                markers.forEach((marker) => map.removeLayer(marker));
-                markers = [];
-
-                // Füge neue Marker hinzu
-                photos.forEach((photo) => {
-                    const popup = L.popup().setContent(`
-                        <div class="popup-title">${photo.path.split("/").pop()}</div>
-                        <img src="${photo.thumb_url}" alt="Thumbnail" class="popup-image" onclick="window.open('${photo.image_url}', '_blank')" />
-                        <div class="popup-info">
-                            <div><strong>Kamera:</strong> ${photo.camera}</div>
-                            <div><strong>Lat:</strong> ${photo.latitude.toFixed(4)}</div>
-                            <div><strong>Lon:</strong> ${photo.longitude.toFixed(4)}</div>
-                            <div><strong>Aufnahme:</strong> ${new Date(photo.modified_ts * 1000).toLocaleDateString("de-DE")}</div>
-                        </div>
-                    `);
-
-                    const marker = L.marker([photo.latitude, photo.longitude])
-                        .bindPopup(popup)
-                        .addTo(map);
-                    markers.push(marker);
-                });
-
-                document.getElementById("photoCount").textContent = photos.length;
+                applyPlaceFilter();
             } catch (error) {
                 console.error("Fehler beim Laden der Fotos:", error);
             }
         }
 
+        function setMapMode(mode) {
+            mapMode = mode;
+            document.getElementById("markersModeBtn").classList.toggle("is-active", mode === "markers");
+            document.getElementById("markersModeBtn").classList.toggle("is-secondary", mode !== "markers");
+            document.getElementById("heatmapModeBtn").classList.toggle("is-active", mode === "heatmap");
+            document.getElementById("heatmapModeBtn").classList.toggle("is-secondary", mode !== "heatmap");
+            renderPhotos(filteredPhotos);
+        }
+
+        async function searchPlace() {
+            const place = document.getElementById("placeInput").value.trim();
+            if (!place) {
+                clearPlaceFilter();
+                return;
+            }
+            try {
+                const response = await fetch(`/api/geocode?q=${encodeURIComponent(place)}`);
+                const data = await response.json();
+                if (!data.results || data.results.length === 0) {
+                    alert("Ort nicht gefunden.");
+                    return;
+                }
+                const first = data.results[0];
+                activePlace = {
+                    name: first.display_name,
+                    lat: first.lat,
+                    lon: first.lon,
+                    radiusKm: getRadiusKm(),
+                };
+                map.setView([activePlace.lat, activePlace.lon], 11);
+                applyPlaceFilter();
+            } catch (error) {
+                console.error("Fehler bei der Ortssuche:", error);
+                alert("Ortssuche derzeit nicht verfügbar.");
+            }
+        }
+
+        function clearPlaceFilter() {
+            activePlace = null;
+            document.getElementById("placeInput").value = "";
+            applyPlaceFilter();
+        }
+
+        async function reverseGeocodeAt(lat, lon) {
+            try {
+                const response = await fetch(`/api/reverse-geocode?lat=${lat}&lon=${lon}`);
+                const data = await response.json();
+                const result = data.result;
+                activePlace = {
+                    name: result?.display_name || `${lat.toFixed(4)}, ${lon.toFixed(4)}`,
+                    lat,
+                    lon,
+                    radiusKm: getRadiusKm(),
+                };
+                document.getElementById("placeInput").value = activePlace.name;
+                applyPlaceFilter();
+            } catch (error) {
+                console.error("Fehler beim Reverse-Geocoding:", error);
+            }
+        }
+
         function fitToPhotos() {
-            if (markers.length === 0) {
+            if (filteredPhotos.length === 0) {
                 alert("Keine Fotos mit GPS-Daten gefunden.");
                 return;
             }
 
-            const group = new L.featureGroup(markers);
+            const fitMarkers = filteredPhotos.map((photo) => L.marker([photo.latitude, photo.longitude]));
+            const group = new L.featureGroup(fitMarkers);
             map.fitBounds(group.getBounds(), { padding: [50, 50] });
         }
 
+        map.on("click", async (event) => {
+            await reverseGeocodeAt(event.latlng.lat, event.latlng.lng);
+        });
+
+        document.getElementById("placeInput").addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                searchPlace();
+            }
+        });
+
         // Lade Fotos beim Seitenladen
+        updateFilterSummary();
         loadPhotos();
 
         // Auto-Refresh alle 30 Sekunden

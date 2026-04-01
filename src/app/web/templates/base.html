@@ -12,6 +12,25 @@
     <main class="layout">
       {% block content %}{% endblock %}
     </main>
+
+    <!-- Photo Detail Modal -->
+    <div id="photo-modal" class="photo-modal" onclick="closePhotoModal(event)">
+      <div class="photo-modal-content" onclick="event.stopPropagation()">
+        <button class="modal-close-btn" onclick="closePhotoModal()">✕</button>
+
+        <div class="modal-body">
+          <div class="modal-image-container">
+            <img id="modal-photo" src="" alt="Photo" class="modal-photo" />
+          </div>
+
+          <div class="modal-details-container">
+            <div id="modal-details" class="modal-details">
+              <div class="details-loading">Lade Details...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </body>
 </html>
 

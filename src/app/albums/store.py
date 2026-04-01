@@ -19,13 +19,14 @@ def create_album(db_path: Path, name: str) -> AlbumSummary:
         raise ValueError("Albumname darf nicht leer sein.")
 
     with sqlite3.connect(db_path) as conn:
+        now_ts = time.time()
         conn.execute(
             """
-            INSERT INTO albums (name, created_ts)
-            VALUES (?, ?)
+            INSERT INTO albums (name, created_ts, updated_ts)
+            VALUES (?, ?, ?)
             ON CONFLICT(name) DO NOTHING
             """,
-            (normalized_name, time.time()),
+            (normalized_name, now_ts, now_ts),
         )
         row = conn.execute(
             """

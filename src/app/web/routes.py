@@ -1,7 +1,10 @@
 import base64
+from functools import lru_cache
 import json
 import math
 from pathlib import Path
+from urllib.parse import quote_plus
+from urllib.request import Request, urlopen
 
 from flask import Blueprint, abort, current_app, jsonify, render_template, request, send_file
 
@@ -13,7 +16,6 @@ from ..albums.store import (
     rename_album,
     set_album_cover,
 )
-from ..index.store import search_photos_by_location
 from ..persons import list_persons
 from ..search.query import run_search_page
 
@@ -33,6 +35,93 @@ def _decode_path(token: str) -> Path:
     except Exception as error:
         raise ValueError("invalid token") from error
     return Path(decoded)
+
+
+def _build_photo_filter_clause(
+    query: str,
+    max_persons: int | None = None,
+    album_id: int | None = None,
+) -> tuple[str, list[object]]:
+    terms = [term.strip().lower() for term in query.split() if term.strip()]
+    where_parts = ["search_blob LIKE ?" for _ in terms]
+    params: list[object] = [f"%{term}%" for term in terms]
+
+    if max_persons is not None:
+        where_parts.append("person_count <= ?")
+        params.append(max_persons)
+    if album_id is not None:
+        where_parts.append(
+            "EXISTS (SELECT 1 FROM album_photos ap WHERE ap.photo_path = photos.path AND ap.album_id = ?)"
+        )
+        params.append(album_id)
+
+    return (" AND ".join(where_parts) if where_parts else "1=1", params)
+
+
+@lru_cache(maxsize=256)
+def _geocode_place_cached(query: str) -> list[dict[str, object]]:
+    if not query.strip():
+        return []
+
+    url = (
+        "https://nominatim.openstreetmap.org/search"
+        f"?q={quote_plus(query.strip())}&format=jsonv2&limit=5&addressdetails=1"
+    )
+    request_obj = Request(
+        url,
+        headers={
+            "User-Agent": "fotos-app/1.0 (local photo search)",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urlopen(request_obj, timeout=8) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return []
+
+    results: list[dict[str, object]] = []
+    for item in payload:
+        try:
+            results.append(
+                {
+                    "display_name": str(item.get("display_name", "")),
+                    "lat": float(item["lat"]),
+                    "lon": float(item["lon"]),
+                }
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return results
+
+
+@lru_cache(maxsize=512)
+def _reverse_geocode_cached(latitude: float, longitude: float) -> dict[str, object] | None:
+    url = (
+        "https://nominatim.openstreetmap.org/reverse"
+        f"?lat={latitude:.6f}&lon={longitude:.6f}&format=jsonv2&zoom=14"
+    )
+    request_obj = Request(
+        url,
+        headers={
+            "User-Agent": "fotos-app/1.0 (local photo search)",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urlopen(request_obj, timeout=8) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return None
+
+    try:
+        return {
+            "display_name": str(payload.get("display_name", "")),
+            "lat": float(payload["lat"]),
+            "lon": float(payload["lon"]),
+        }
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def _build_album_payload(
@@ -386,55 +475,175 @@ def thumb_file(token: str):
 @web_blueprint.get("/map")
 def map_view():
     """Zeigt eine Karte mit Foto-Positionen."""
-    return render_template("map.html")
+    query = request.args.get("q", "").strip()
+    album_id = request.args.get("album_id", default=None, type=int)
+    max_persons = request.args.get("max_persons", default=None, type=int)
+    return render_template(
+        "map.html",
+        query=query,
+        active_album_id=album_id,
+        max_persons=max_persons,
+    )
 
 
 @web_blueprint.get("/api/photos-with-location")
 def api_photos_with_location():
     """API-Endpoint für Fotos mit GPS-Daten."""
     db_path: Path = current_app.config["DB_PATH"]
-    cache_dir: Path = current_app.config["CACHE_DIR"]
-    thumb_size: int = int(current_app.config.get("THUMB_SIZE", 360))
+    query = request.args.get("q", "").strip()
+    max_persons = request.args.get("max_persons", default=None, type=int)
+    album_id = request.args.get("album_id", default=None, type=int)
+    limit = request.args.get("limit", default=20000, type=int)
+    safe_limit = max(1, min(limit, 50000))
 
     if not db_path.exists():
         return jsonify({"photos": []})
 
-    # Hole alle Fotos mit GPS-Daten
     import sqlite3
+
+    filter_sql, filter_params = _build_photo_filter_clause(
+        query=query,
+        max_persons=max_persons,
+        album_id=album_id,
+    )
 
     with sqlite3.connect(db_path) as conn:
         rows = conn.execute(
-            """
-            SELECT path, exif_json, modified_ts
+            f"""
+            SELECT
+                path,
+                COALESCE(taken_ts, modified_ts) AS sort_ts,
+                json_extract(exif_json, '$.latitude') AS latitude,
+                json_extract(exif_json, '$.longitude') AS longitude,
+                COALESCE(json_extract(exif_json, '$.camera_model'), 'Unbekannt') AS camera
             FROM photos
-            WHERE exif_json IS NOT NULL
-            LIMIT 1000
+            WHERE {filter_sql}
+              AND json_extract(exif_json, '$.latitude') IS NOT NULL
+              AND json_extract(exif_json, '$.longitude') IS NOT NULL
+            ORDER BY COALESCE(taken_ts, modified_ts) DESC
+            LIMIT ?
             """
+            ,
+            (*filter_params, safe_limit),
         ).fetchall()
 
     photos = []
     for row in rows:
         try:
-            exif_data = json.loads(row[1])
-            latitude = exif_data.get("latitude")
-            longitude = exif_data.get("longitude")
-
-            if latitude is None or longitude is None:
-                continue
-
-            photo_path = Path(row[0])
             token = _encode_path(row[0])
 
             photos.append({
                 "path": row[0],
                 "token": token,
-                "latitude": latitude,
-                "longitude": longitude,
+                "latitude": float(row[2]),
+                "longitude": float(row[3]),
                 "thumb_url": f"/thumb/{token}",
-                "modified_ts": row[2],
-                "camera": exif_data.get("camera_model", "Unbekannt"),
+                "image_url": f"/photo/{token}",
+                "captured_ts": float(row[1]) if row[1] is not None else None,
+                "camera": row[4] or "Unbekannt",
             })
-        except (json.JSONDecodeError, KeyError, TypeError):
+        except (TypeError, ValueError):
             continue
 
     return jsonify({"photos": photos})
+
+
+@web_blueprint.get("/api/geocode")
+def api_geocode():
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify({"results": []})
+    return jsonify({"results": _geocode_place_cached(query)})
+
+
+@web_blueprint.get("/api/reverse-geocode")
+def api_reverse_geocode():
+    latitude = request.args.get("lat", type=float)
+    longitude = request.args.get("lon", type=float)
+    if latitude is None or longitude is None:
+        return jsonify({"result": None}), 400
+    return jsonify({"result": _reverse_geocode_cached(latitude, longitude)})
+
+
+@web_blueprint.get("/api/photo-details/<token>")
+def api_photo_details(token: str):
+    """API-Endpoint für Foto-Details einschließlich EXIF-Daten."""
+    import sqlite3
+    from PIL import Image
+
+    try:
+        path = _decode_path(token)
+    except ValueError:
+        return jsonify({"error": "invalid token"}), 400
+
+    if not path.exists() or not path.is_file():
+        return jsonify({"error": "photo not found"}), 404
+
+    db_path: Path = current_app.config["DB_PATH"]
+
+    result = {
+        "file_info": {
+            "path": str(path),
+            "size_bytes": path.stat().st_size,
+            "modified_ts": path.stat().st_mtime,
+        },
+        "image_info": {},
+        "labels": [],
+        "exif": {},
+    }
+
+    # Get image info (dimensions, format)
+    try:
+        with Image.open(path) as img:
+            result["image_info"]["width"] = img.width
+            result["image_info"]["height"] = img.height
+            result["image_info"]["format"] = img.format or "Unknown"
+    except Exception:
+        pass
+
+    # Get labels and EXIF from database
+    if db_path.exists():
+        try:
+            with sqlite3.connect(db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT labels_json, exif_json FROM photos WHERE path = ?",
+                    (str(path),)
+                ).fetchone()
+
+                if row:
+                    # Parse labels
+                    try:
+                        labels = json.loads(row["labels_json"] or "[]")
+                        result["labels"] = labels if isinstance(labels, list) else []
+                    except (json.JSONDecodeError, TypeError):
+                        result["labels"] = []
+
+                    # Parse EXIF data
+                    try:
+                        exif_data = json.loads(row["exif_json"] or "{}")
+                        if isinstance(exif_data, dict):
+                            # Map EXIF fields to friendly names
+                            exif_mapping = {
+                                "camera_make": "camera_make",
+                                "camera_model": "camera_model",
+                                "lens": "lens",
+                                "focal_length": "focal_length",
+                                "f_number": "f_number",
+                                "exposure_time": "exposure_time",
+                                "iso": "iso",
+                                "datetime": "datetime",
+                                "latitude": "latitude",
+                                "longitude": "longitude",
+                            }
+
+                            for db_key, result_key in exif_mapping.items():
+                                if db_key in exif_data:
+                                    result["exif"][result_key] = exif_data[db_key]
+                    except (json.JSONDecodeError, TypeError):
+                        result["exif"] = {}
+        except Exception:
+            pass
+
+    return jsonify(result)
+

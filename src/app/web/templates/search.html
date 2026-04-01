@@ -36,6 +36,12 @@
       </label>
       <input type="hidden" name="max_persons" id="max-persons-input" value="{{ max_persons if max_persons else '' }}" />
       <button type="submit">Suchen</button>
+      <a
+        href="{{ url_for('web.map_view', q=query, album_id=active_album_id, max_persons=max_persons) }}"
+        style="display: inline-flex; align-items: center; padding: 0.45rem 0.8rem; border: 1px solid #ddd; border-radius: 0.35rem; text-decoration: none; color: inherit; background: #fff;"
+      >
+        Karte öffnen
+      </a>
       <span id="loading" class="loading">Lade...</span>
     </form>
 
