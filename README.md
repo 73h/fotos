@@ -1,33 +1,46 @@
-# Fotos MVP (lokale Suche)
+# Fotos - lokale Foto-Suche mit Personen, Alben und Timelapse
 
-Dieses Projekt bietet ein lauffaehiges Grundgeruest fuer lokale Foto-Indexierung und Suche.
+`fotos` ist eine lokale Foto-Suchmaschine fuer Windows/Linux/Mac.
+Sie scannt grosse Bildbestaende, legt einen SQLite-Index an und bietet dir eine schnelle Suche per CLI und Web-UI.
 
-## Features im MVP
+Der Fokus liegt auf:
+- **lokal-first** (deine Bilder bleiben auf deinem Rechner)
+- **inkrementeller Indexierung** (nur Neues wird nachgeladen)
+- **personenzentrierter Suche** (inkl. Smile-Filter)
+- **Album-Workflows** bis hin zu **Aging-Timelapse-Videos mit Morphing-Effekt**
 
-- rekursiver Foto-Scan eines oder mehrerer Ordner
-- inkrementelle Indexierung (Index kann schrittweise erweitert werden)
-- optionale Parallelisierung der Index-Vorverarbeitung (`--index-workers`)
-- SQLite-Index (`data/photo_index.db`)
-- Duplikat-Markierung (exakt via SHA1, optional nahe Duplikate via pHash)
-- YOLOv8 Labels fuer `person`, `animal`, `object`
-- Erkennung bestimmter Personen per Referenzbilder (`enroll`)
-- Alben anlegen, benennen und Fotos zuweisen
-- Textsuche ueber Dateiname, Pfad und Labels
-- Websuche mit Flask + HTMX, Thumbnail-Cache und Pagination
+## Was das Projekt kann
 
-## Voraussetzungen
+- Rekursives Scannen mehrerer Foto-Ordner
+- Inkrementeller Index mit SQLite (`data/photo_index.db`)
+- Duplikaterkennung (SHA1, optional near duplicates per pHash)
+- Objekt-/Szenen-Labels mit YOLOv8 (`person`, `animal`, `object`)
+- Personen einlernen ueber Referenzbilder (`enroll`)
+- Personensuche per Name (`search-person`, `person:<name>`)
+- Smile-Filter in Suche und Web-API (`smile>=...`)
+- Alben anlegen, umbenennen, Cover setzen, Fotos zuweisen
+- Aging-Timelapse pro Album+Person als MP4 (CLI + Web-API + Download)
+- Weboberflaeche mit Thumbnail-Cache, Pagination und API-Endpunkten
 
-- Python 3.11 oder 3.12 empfohlen
-- Windows PowerShell
-- NVIDIA GPU + passendes PyTorch CUDA-Wheel
+## Setup
 
-Abhaengigkeiten installieren:
+### Voraussetzungen
+
+- Python **3.11** oder **3.12**
+- `pip` (aktuell)
+- Optional fuer bessere Personenqualitaet: NVIDIA GPU + passendes PyTorch/ONNX Runtime Setup
+
+### Installation
 
 ```powershell
+Set-Location "D:\Code\fotos"
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-Optional fuer echte Gesichtsembeddings (InsightFace):
+Optional fuer echte Gesichts-Embeddings (InsightFace):
 
 ```powershell
 python -m pip install -r requirements-face.txt
@@ -36,136 +49,81 @@ python -m pip install -r requirements-face.txt
 ## Schnellstart
 
 ```powershell
-Set-Location "D:\Code\fotos"
-.\.venv\Scripts\Activate.ps1
-python src/main.py --help
-```
-
-System-Diagnose:
-
-```powershell
 python src/main.py doctor
-```
-
-Index bauen:
-
-```powershell
 python src/main.py index --root "D:\MeineFotos"
-python src/main.py index --root "D:\MeineFotos" --person-backend auto
-```
-
-Index mit mehreren Root-Pfaden erweitern (inkrementell):
-
-```powershell
-python src/main.py index --root "D:\MeineFotos" --root "D:\UrlaubsFotos"
-python src/main.py index --root "D:\Fotos2024" --root "D:\Fotos2025" --root "D:\Archiv"
-```
-
-Schneller/gezielter indexieren:
-
-```powershell
-python src/main.py index --root "D:\MeineFotos" --index-workers 8
-python src/main.py index --root "D:\MeineFotos" --force-reindex
-python src/main.py index --root "D:\MeineFotos" --near-duplicates --phash-threshold 6
-```
-
-- Ohne `--force-reindex` werden unveraenderte Dateien (Groesse + mtime) uebersprungen.
-- `--index-workers` parallelisiert die Vorverarbeitung; DB-Schreiben bleibt stabil seriell.
-- Exakte Duplikate werden immer markiert, near duplicates nur mit `--near-duplicates`.
-
-Suchen:
-
-```powershell
-python src/main.py search --query "hund strand"
-python src/main.py search --query "person fahrrad" --limit 10
-```
-
-Webanwendung starten:
-
-```powershell
 python src/main.py web
+```
+
+Danach im Browser oeffnen: `http://127.0.0.1:5000`
+
+## Typische Workflows
+
+### 1) Suchen
+
+```powershell
+python src/main.py search --query "hund strand" --limit 20
+python src/main.py search --query "person:marie smile>=0.6" --limit 50
+```
+
+### 2) Person einlernen und suchen
+
+```powershell
+python src/main.py enroll --name "Marie" --root "D:\Referenzbilder\Marie"
+python src/main.py search-person --name "Marie" --limit 30
+python src/main.py search-person --name "Marie" --max-persons 1 --limit 30
+```
+
+### 3) Smile-Score aktualisieren (ohne kompletten Reindex)
+
+Wenn du nur Personenmatching/Smile-Scores neu berechnen willst, brauchst du **keinen** Voll-Reindex:
+
+```powershell
+python src/main.py rematch-persons --workers 4
+```
+
+### 4) Album-Timelapse (Aging + Morphing)
+
+CLI:
+
+```powershell
+python src/main.py album-timelapse --album-id 1 --person "Marie" --output "data\cache\exports\marie_aging.mp4"
+```
+
+Web-API (Start + Download):
+
+```powershell
+curl -Method POST "http://127.0.0.1:5000/api/albums/1/timelapse" -ContentType "application/json" -Body '{"person":"Marie","fps":24,"hold":24,"morph":48,"size":512}'
+curl "http://127.0.0.1:5000/api/albums/timelapse/status/album_1_marie"
+curl "http://127.0.0.1:5000/api/albums/timelapse/download/album_1_marie" -OutFile "marie_aging.mp4"
+```
+
+## Wichtige CLI-Kommandos
+
+```powershell
+python src/main.py --help
+python src/main.py index --root "D:\MeineFotos" --index-workers 8
+python src/main.py index --root "D:\MeineFotos" --near-duplicates --phash-threshold 6
+python src/main.py update-exif
+python src/main.py rematch-persons --workers 4
 python src/main.py web --host 0.0.0.0 --port 5050
-python src/main.py web --db "data/photo_index.db" --cache-dir "data/cache"
 ```
 
-Dann im Browser oeffnen: `http://127.0.0.1:5000`
-
-In der Web-UI kannst du rechts Alben anlegen und Bilder per Drag&Drop in ein Album ziehen.
-Ein Klick auf ein Album aktiviert den Albumfilter fuer die Suche.
-
-REST-Endpunkt fuer Integrationen:
-
-```powershell
-curl "http://127.0.0.1:5000/api/search?q=hund&page=1&per_page=24"
-```
-
-Bestimmte Person einlernen:
-
-```powershell
-python src/main.py enroll --name "Max" --root "D:\Referenzbilder\Max"
-python src/main.py enroll --name "Max" --root "D:\Referenzbilder\Max" --person-backend insightface
-```
-
-Nach Person suchen:
-
-```powershell
-python src/main.py search-person --name "Max" --limit 20
-python src/main.py search --query "person:max"
-```
-
-Nur Solo-Bilder (Person allein, keine anderen Personen im Bild):
-
-```powershell
-python src/main.py search-person --name "Max" --limit 20 --max-persons 1
-```
-
-Ueber Web-API (auch in der WebUI per Query-Parameter):
-
-```powershell
-curl "http://127.0.0.1:5000/api/search?q=person:max&max_persons=1"
-```
-
-Schneller Selbsttest:
-
-```powershell
-python -m unittest tests.test_person_matching -v
-```
-
-## Naechster Schritt (GPU-Modelle)
-
-`src/app/detectors/labels.py` nutzt YOLOv8 (Ultralytics) fuer die Kategorien
-`person`, `animal`, `object`.
-
-`src/app/persons/service.py` nutzt ein austauschbares Embedding-Backend:
-
-- `insightface` (wenn verfuegbar): echte Gesichts-Embeddings
-- `histogram`: robuster Fallback
-- `auto` (Standard): versucht InsightFace, faellt sonst auf Histogramm zurueck
-
-`place` wird im MVP weiter ueber Pfad-/Dateinamen-Schluesselwoerter erkannt.
-
-Optional konfigurierbar:
+## Konfiguration (optional)
 
 ```powershell
 $env:FOTOS_YOLO_MODEL="yolov8n.pt"
 $env:FOTOS_YOLO_CONF="0.25"
+$env:FOTOS_PERSON_BACKEND="auto"      # auto | insightface | histogram
 $env:FOTOS_PERSON_THRESHOLD="0.38"
 $env:FOTOS_PERSON_TOP_K="3"
-$env:FOTOS_PERSON_FULL_IMAGE_FALLBACK="1"
-$env:FOTOS_PERSON_BACKEND="insightface"
 $env:FOTOS_INSIGHTFACE_MODEL="buffalo_l"
 $env:FOTOS_INSIGHTFACE_CTX="0"
 $env:FOTOS_INSIGHTFACE_DET_SIZE="640,640"
-$env:FOTOS_QUIET_INFERENCE  = "1"
-python src/main.py index --root "D:\MeineFotos"
+$env:FOTOS_QUIET_INFERENCE="1"
 ```
 
-## Web-App Details
+## Tests
 
-- Suche in der Web-UI nutzt denselben SQLite-Index wie die CLI.
-- Treffer werden als Thumbnail-Kacheln angezeigt.
-- Thumbnails werden in `data/cache/thumbnails` persistent zwischengespeichert.
-- Ergebnisse sind seitenweise abrufbar (`page`, `per_page`), auch ueber `/api/search`.
-- Rechts koennen Alben angelegt werden; Trefferkarten lassen sich per Drag&Drop in Alben schieben.
-- Albumfilter ist ueber die Album-Boxen in der Web-UI und ueber `album_id` in `/api/search` verfuegbar.
-
+```powershell
+python -m pytest -q
+```
