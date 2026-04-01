@@ -10,21 +10,13 @@
 {% if items %}
 <div class="grid">
   {% for item in items %}
-  <article class="card photo-card" draggable="true" data-photo-token="{{ item.token }}" data-photo-path="{{ item.path }}" style="position: relative;">
+  <article class="card photo-card" draggable="true" data-photo-token="{{ item.token }}" data-photo-path="{{ item.path }}" onclick="openPhotoModal('{{ item.token }}')" style="position: relative;">
     {% if active_album_id %}
-    <button type="button" class="photo-remove-btn" onclick="removePhotoFromAlbum('{{ item.token }}', {{ active_album_id }}, this)" style="position: absolute; top: 5px; right: 5px; z-index: 10; background: rgba(255,0,0,0.7); color: white; border: none; border-radius: 3px; padding: 2px 6px; cursor: pointer; font-size: 12px;">✕</button>
+    <button type="button" class="photo-remove-btn" onclick="event.stopPropagation(); removePhotoFromAlbum('{{ item.token }}', {{ active_album_id }}, this)" style="position: absolute; top: 5px; right: 5px; z-index: 10; background: rgba(255,0,0,0.7); color: white; border: none; border-radius: 3px; padding: 2px 6px; cursor: pointer; font-size: 12px;">✕</button>
     {% endif %}
-    <a href="{{ item.image_url }}" target="_blank" rel="noopener noreferrer">
-      <img src="{{ item.thumb_url }}" alt="{{ item.path }}" loading="lazy" />
-    </a>
+    <img src="{{ item.thumb_url }}" alt="{{ item.path }}" loading="lazy" />
     <div class="path">{{ item.path }}</div>
     <div class="labels">{{ item.labels|join(', ') if item.labels else '-' }}</div>
-    {% if item.duplicate_kind %}
-    <div class="labels">
-      Duplikat ({{ item.duplicate_kind }})
-      {% if item.duplicate_score is not none %}{{ '%.2f'|format(item.duplicate_score) }}{% endif %}
-    </div>
-    {% endif %}
   </article>
   {% endfor %}
 </div>
