@@ -49,5 +49,39 @@
   {% if not albums %}
   <p class="album-empty">Noch keine Alben vorhanden.</p>
   {% endif %}
-</section>
 
+  {% if active_album_id %}
+  <div class="timelapse-panel" data-timelapse-panel="1" data-album-id="{{ active_album_id }}">
+    <h3>Aging-Timelapse</h3>
+    <p>Film für eine Person im aktiven Album erzeugen.</p>
+
+    <div class="timelapse-form-row">
+      <input
+        type="text"
+        id="timelapse-person-input"
+        placeholder="Personenname"
+        list="timelapse-person-suggestions"
+      />
+      <datalist id="timelapse-person-suggestions">
+        {% for person in persons|default([]) %}
+        <option value="{{ person.name }}"></option>
+        {% endfor %}
+      </datalist>
+    </div>
+
+    <div class="timelapse-form-grid">
+      <label>FPS <input type="number" id="timelapse-fps-input" value="24" min="5" max="60" /></label>
+      <label>Hold <input type="number" id="timelapse-hold-input" value="24" min="1" max="240" /></label>
+      <label>Morph <input type="number" id="timelapse-morph-input" value="48" min="1" max="480" /></label>
+      <label>Size <input type="number" id="timelapse-size-input" value="512" min="128" max="2048" step="64" /></label>
+    </div>
+
+    <div class="timelapse-actions">
+      <button type="button" id="timelapse-start-btn" onclick="startAlbumTimelapse()">Film erstellen</button>
+      <a id="timelapse-download-link" class="timelapse-download-link" href="#" style="display:none;">Download MP4</a>
+    </div>
+
+    <div id="timelapse-status" class="timelapse-status">Bereit.</div>
+  </div>
+  {% endif %}
+</section>

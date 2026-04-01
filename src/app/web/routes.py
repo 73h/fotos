@@ -2,6 +2,8 @@ import base64
 from functools import lru_cache
 import json
 import math
+import re
+import threading
 from pathlib import Path
 from urllib.parse import quote_plus
 from urllib.request import Request, urlopen
@@ -23,6 +25,18 @@ from ..search.query import run_search_page
 from .thumbnails import ensure_thumbnail
 
 web_blueprint = Blueprint("web", __name__)
+
+# ---------------------------------------------------------------------------
+# Timelapse-Job-Verwaltung (einfacher In-Process-Status)
+# ---------------------------------------------------------------------------
+
+_timelapse_jobs: dict[str, dict] = {}
+_timelapse_lock = threading.Lock()
+
+
+def _make_job_id(album_id: int, person_name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", person_name.lower().strip())
+    return f"album_{album_id}_{slug}"
 
 
 def _encode_path(path: str) -> str:
@@ -179,6 +193,7 @@ def _build_album_payload(
     db_path: Path = current_app.config["DB_PATH"]
     albums = list_albums(db_path=db_path) if db_path.exists() else []
     active_album = get_album(db_path=db_path, album_id=album_id) if album_id is not None and db_path.exists() else None
+    persons = list_persons(db_path=db_path) if db_path.exists() else []
     return {
         "albums": [
             {
@@ -194,6 +209,14 @@ def _build_album_payload(
         "query": query,
         "per_page": per_page,
         "max_persons": max_persons,
+        "persons": [
+            {
+                "id": person.id,
+                "name": person.name,
+                "photo_count": person.photo_count,
+            }
+            for person in persons
+        ],
     }
 
 
@@ -692,4 +715,134 @@ def api_photo_details(token: str):
             pass
 
     return jsonify(result)
+
+
+# ---------------------------------------------------------------------------
+# Timelapse-Endpunkte
+# ---------------------------------------------------------------------------
+
+@web_blueprint.post("/api/albums/<int:album_id>/timelapse")
+def api_album_timelapse(album_id: int):
+    """
+    Startet die Timelapse-Generierung im Hintergrund.
+
+    JSON-Body (alle optional außer person):
+      { "person": "Marie", "fps": 24, "hold": 24, "morph": 48, "size": 512 }
+
+    Antwort:
+      202 { "job_id": "...", "status_url": "..." }   – Generierung läuft
+      200 { "ok": true, "download_url": "..." }       – sofort fertig (gecacht)
+    """
+    from ..albums.timelapse import TimelapseConfig, generate_aging_timelapse
+
+    db_path: Path = current_app.config["DB_PATH"]
+    cache_dir: Path = current_app.config["CACHE_DIR"]
+
+    if not db_path.exists():
+        return jsonify({"error": "Index nicht gefunden"}), 404
+
+    body = request.get_json(silent=True) or {}
+    person_name: str = str(body.get("person", "")).strip()
+    if not person_name:
+        return jsonify({"error": "Feld 'person' fehlt"}), 400
+
+    fps   = int(body.get("fps",   24))
+    hold  = int(body.get("hold",  24))
+    morph = int(body.get("morph", 48))
+    size  = int(body.get("size",  512))
+
+    job_id = _make_job_id(album_id, person_name)
+    exports_dir = cache_dir / "exports"
+    output_path = exports_dir / f"{job_id}.mp4"
+
+    # Bereits fertig?
+    if output_path.exists():
+        return jsonify({"ok": True, "download_url": f"/api/albums/timelapse/download/{job_id}"})
+
+    with _timelapse_lock:
+        job = _timelapse_jobs.get(job_id)
+        if job and job["status"] == "done":
+            return jsonify({"ok": True, "download_url": f"/api/albums/timelapse/download/{job_id}"})
+        if job and job["status"] == "running":
+            return jsonify({"job_id": job_id, "status": "running",
+                            "status_url": f"/api/albums/timelapse/status/{job_id}"}), 202
+
+    # Neuen Job starten
+    cfg = TimelapseConfig(fps=fps, hold_frames=hold, morph_frames=morph, output_size=size)
+
+    with _timelapse_lock:
+        _timelapse_jobs[job_id] = {"status": "running", "step": 0, "total": 0, "message": "Starte …"}
+
+    def _run() -> None:
+        try:
+            def _cb(step: int, total: int, msg: str) -> None:
+                with _timelapse_lock:
+                    _timelapse_jobs[job_id].update({"step": step, "total": total, "message": msg})
+
+            count = generate_aging_timelapse(
+                db_path=db_path,
+                album_id=album_id,
+                person_name=person_name,
+                output_path=output_path,
+                config=cfg,
+                progress_cb=_cb,
+            )
+            with _timelapse_lock:
+                _timelapse_jobs[job_id].update({
+                    "status": "done",
+                    "count": count,
+                    "message": f"✓ {count} Fotos verarbeitet",
+                })
+        except Exception as exc:
+            with _timelapse_lock:
+                _timelapse_jobs[job_id].update({"status": "error", "message": str(exc)})
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"job_id": job_id, "status": "running",
+                    "status_url": f"/api/albums/timelapse/status/{job_id}"}), 202
+
+
+@web_blueprint.get("/api/albums/timelapse/status/<job_id>")
+def api_timelapse_status(job_id: str):
+    """Gibt den aktuellen Status eines Timelapse-Jobs zurück."""
+    cache_dir: Path = current_app.config["CACHE_DIR"]
+    output_path = cache_dir / "exports" / f"{job_id}.mp4"
+
+    with _timelapse_lock:
+        job = _timelapse_jobs.get(job_id)
+
+    if job is None:
+        if output_path.exists():
+            return jsonify(
+                {
+                    "status": "done",
+                    "step": 1,
+                    "total": 1,
+                    "message": "Video bereits vorhanden.",
+                    "download_url": f"/api/albums/timelapse/download/{job_id}",
+                }
+            )
+        return jsonify({"error": "Job nicht gefunden"}), 404
+
+    response = dict(job)
+    if job["status"] == "done":
+        response["download_url"] = f"/api/albums/timelapse/download/{job_id}"
+    return jsonify(response)
+
+
+@web_blueprint.get("/api/albums/timelapse/download/<job_id>")
+def api_timelapse_download(job_id: str):
+    """Lädt das fertige Timelapse-Video herunter."""
+    cache_dir: Path = current_app.config["CACHE_DIR"]
+    output_path = cache_dir / "exports" / f"{job_id}.mp4"
+
+    if not output_path.exists():
+        return jsonify({"error": "Video nicht gefunden – zuerst generieren"}), 404
+
+    return send_file(
+        output_path,
+        mimetype="video/mp4",
+        as_attachment=True,
+        download_name=f"{job_id}.mp4",
+    )
 

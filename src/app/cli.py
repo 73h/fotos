@@ -102,6 +102,25 @@ def _build_parser() -> argparse.ArgumentParser:
     exif_parser = subparsers.add_parser("update-exif", help="EXIF-Daten schnell aktualisieren (ohne Neu-Indexierung)")
     exif_parser.add_argument("--db", default=None, help="Pfad zur SQLite-DB")
 
+    timelapse_parser = subparsers.add_parser(
+        "album-timelapse",
+        help="Aging-Timelapse-Video fuer eine Person aus einem Album generieren",
+    )
+    timelapse_parser.add_argument("--album-id", required=True, type=int, help="Album-ID")
+    timelapse_parser.add_argument("--person", required=True, help="Name der Person")
+    timelapse_parser.add_argument("--output", required=True, help="Ausgabedatei (z.B. aging.mp4)")
+    timelapse_parser.add_argument("--db", default=None, help="Pfad zur SQLite-DB")
+    timelapse_parser.add_argument("--fps", type=int, default=24, help="Frames pro Sekunde (Default: 24)")
+    timelapse_parser.add_argument("--hold", type=int, default=24,
+                                  help="Frames pro Originalfoto (Default: 24 = 1 s)")
+    timelapse_parser.add_argument("--morph", type=int, default=48,
+                                  help="Uebergangsframes zwischen Fotos (Default: 48 = 2 s)")
+    timelapse_parser.add_argument("--size", type=int, default=512,
+                                  help="Ausgabegroesse in Pixeln, quadratisch (Default: 512)")
+    timelapse_parser.add_argument("--person-backend", default=None,
+                                  choices=["auto", "insightface", "histogram"],
+                                  help="Embedding-Backend fuer Gesichtserkennung")
+
     rematch_parser = subparsers.add_parser(
         "rematch-persons",
         help="Personen-Matching (inkl. Smile-Score) fuer alle indizierten Fotos neu berechnen",
@@ -366,6 +385,65 @@ def _web_command(
     return 0
 
 
+def _album_timelapse_command(
+    config: AppConfig,
+    album_id: int,
+    person_name: str,
+    output_file: str,
+    custom_db_path: str | None,
+    fps: int,
+    hold_frames: int,
+    morph_frames: int,
+    output_size: int,
+    person_backend: str | None,
+) -> int:
+    from .albums.timelapse import TimelapseConfig, generate_aging_timelapse
+
+    db_path = config.resolve_db_path(custom_db_path)
+    if not db_path.exists():
+        print(f"Index nicht gefunden: {db_path}")
+        return 1
+
+    if person_backend:
+        import os
+        os.environ["FOTOS_PERSON_BACKEND"] = person_backend
+
+    output_path = Path(output_file)
+    cfg = TimelapseConfig(
+        fps=fps,
+        hold_frames=hold_frames,
+        morph_frames=morph_frames,
+        output_size=output_size,
+    )
+
+    def _cb(step: int, total: int, msg: str) -> None:
+        print(f"  [{step}/{total}] {msg}")
+
+    try:
+        count = generate_aging_timelapse(
+            db_path=db_path,
+            album_id=album_id,
+            person_name=person_name,
+            output_path=output_path,
+            config=cfg,
+            progress_cb=_cb,
+        )
+    except ImportError as exc:
+        print(f"Fehler: {exc}")
+        return 1
+    except ValueError as exc:
+        print(f"Fehler: {exc}")
+        return 1
+
+    duration_s = (count * hold_frames + (count - 1) * morph_frames) / fps
+    print(
+        f"\n✓ Timelapse erstellt: {output_path.resolve()}\n"
+        f"  Fotos: {count}  |  Dauer: {duration_s:.1f} s  |  "
+        f"{fps} fps, {output_size}×{output_size} px"
+    )
+    return 0
+
+
 def _rematch_persons_command(
     config: AppConfig,
     custom_db_path: str | None,
@@ -505,6 +583,19 @@ def main() -> int:
             host=args.host,
             port=args.port,
             debug=args.debug,
+        )
+    if args.command == "album-timelapse":
+        return _album_timelapse_command(
+            config=config,
+            album_id=args.album_id,
+            person_name=args.person,
+            output_file=args.output,
+            custom_db_path=args.db,
+            fps=args.fps,
+            hold_frames=args.hold,
+            morph_frames=args.morph,
+            output_size=args.size,
+            person_backend=args.person_backend,
         )
     if args.command == "update-exif":
         return _update_exif_command(

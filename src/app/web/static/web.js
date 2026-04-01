@@ -305,12 +305,143 @@
     document.getElementById("search-form").requestSubmit();
   }
 
+  function getTimelapseElements() {
+    const panel = document.querySelector("[data-timelapse-panel='1']");
+    if (!panel) {
+      return null;
+    }
+    return {
+      panel,
+      albumId: panel.dataset.albumId,
+      personInput: document.getElementById("timelapse-person-input"),
+      fpsInput: document.getElementById("timelapse-fps-input"),
+      holdInput: document.getElementById("timelapse-hold-input"),
+      morphInput: document.getElementById("timelapse-morph-input"),
+      sizeInput: document.getElementById("timelapse-size-input"),
+      startBtn: document.getElementById("timelapse-start-btn"),
+      statusBox: document.getElementById("timelapse-status"),
+      downloadLink: document.getElementById("timelapse-download-link"),
+    };
+  }
+
+  function setTimelapseStatus(text, isError = false) {
+    const ui = getTimelapseElements();
+    if (!ui || !ui.statusBox) {
+      return;
+    }
+    ui.statusBox.textContent = text;
+    ui.statusBox.style.color = isError ? "#ff7a7a" : "";
+  }
+
+  async function pollTimelapseStatus(statusUrl) {
+    const maxRounds = 180; // bis ca. 6 Minuten bei 2s Polling
+    for (let i = 0; i < maxRounds; i++) {
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+
+      const response = await fetch(statusUrl);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || "Status konnte nicht geladen werden.");
+      }
+
+      const step = Number(payload.step || 0);
+      const total = Number(payload.total || 0);
+      const progress = total > 0 ? ` [${step}/${total}]` : "";
+      const message = String(payload.message || "").trim();
+      setTimelapseStatus((message || "Generierung laeuft...") + progress);
+
+      if (payload.status === "done") {
+        const ui = getTimelapseElements();
+        if (ui && ui.downloadLink && payload.download_url) {
+          ui.downloadLink.href = String(payload.download_url);
+          ui.downloadLink.style.display = "inline-block";
+        }
+        setTimelapseStatus("Fertig. Film steht zum Download bereit.");
+        return;
+      }
+
+      if (payload.status === "error") {
+        throw new Error(payload.message || "Timelapse-Erstellung fehlgeschlagen.");
+      }
+    }
+
+    throw new Error("Timeout: Timelapse dauert laenger als erwartet.");
+  }
+
+  async function startAlbumTimelapse() {
+    const ui = getTimelapseElements();
+    if (!ui || !ui.albumId) {
+      return;
+    }
+
+    const person = ui.personInput ? ui.personInput.value.trim() : "";
+    if (!person) {
+      setTimelapseStatus("Bitte eine Person eingeben.", true);
+      return;
+    }
+
+    const payload = {
+      person,
+      fps: Number(ui.fpsInput ? ui.fpsInput.value : 24) || 24,
+      hold: Number(ui.holdInput ? ui.holdInput.value : 24) || 24,
+      morph: Number(ui.morphInput ? ui.morphInput.value : 48) || 48,
+      size: Number(ui.sizeInput ? ui.sizeInput.value : 512) || 512,
+    };
+
+    if (ui.startBtn) {
+      ui.startBtn.disabled = true;
+      ui.startBtn.textContent = "Erstelle...";
+    }
+    if (ui.downloadLink) {
+      ui.downloadLink.style.display = "none";
+      ui.downloadLink.removeAttribute("href");
+    }
+    setTimelapseStatus("Starte Timelapse-Generierung...");
+
+    try {
+      const response = await fetch(`/api/albums/${ui.albumId}/timelapse`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "HX-Request": "true",
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.error || "Timelapse konnte nicht gestartet werden.");
+      }
+
+      if (data.download_url && ui.downloadLink) {
+        ui.downloadLink.href = String(data.download_url);
+        ui.downloadLink.style.display = "inline-block";
+        setTimelapseStatus("Video bereits vorhanden. Direkt herunterladen.");
+        return;
+      }
+
+      if (!data.status_url) {
+        throw new Error("Status-URL fehlt in der Serverantwort.");
+      }
+
+      await pollTimelapseStatus(String(data.status_url));
+    } catch (error) {
+      setTimelapseStatus(`Fehler: ${error}`, true);
+    } finally {
+      if (ui.startBtn) {
+        ui.startBtn.disabled = false;
+        ui.startBtn.textContent = "Film erstellen";
+      }
+    }
+  }
+
   // Export functions globally for inline onclick handlers
   window.renameAlbumPrompt = renameAlbumPrompt;
   window.deleteAlbumPrompt = deleteAlbumPrompt;
   window.removePhotoFromAlbum = removePhotoFromAlbum;
   window.filterByPerson = filterByPerson;
   window.updateDateFilter = updateDateFilter;
+  window.startAlbumTimelapse = startAlbumTimelapse;
 
   // Photo Modal functions
   async function openPhotoModal(photoToken) {
@@ -470,6 +601,10 @@
   window.closePhotoModal = closePhotoModal;
   window.toggleMenu = toggleMenu;
 
-  document.addEventListener("DOMContentLoaded", () => initAlbumDragDrop(document));
-  document.body.addEventListener("htmx:afterSwap", () => initAlbumDragDrop(document));
+  document.addEventListener("DOMContentLoaded", () => {
+    initAlbumDragDrop(document);
+  });
+  document.body.addEventListener("htmx:afterSwap", () => {
+    initAlbumDragDrop(document);
+  });
 })();

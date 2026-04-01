@@ -250,6 +250,72 @@ class WebAppTests(unittest.TestCase):
             found_paths = {Path(item["path"]).name for item in payload_person_only["items"]}
             self.assertEqual(found_paths, {"person_smile_high.jpg", "person_smile_low.jpg"})
 
+    def test_timelapse_ui_and_cached_download_endpoints(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            workspace = Path(tmp_dir)
+            db_path = workspace / "data" / "photo_index.db"
+            cache_dir = workspace / "data" / "cache"
+            ensure_schema(db_path)
+
+            app = create_app(
+                app_config=AppConfig.from_workspace(workspace_root=workspace),
+                custom_db_path=str(db_path),
+                custom_cache_dir=str(cache_dir),
+            )
+            client = app.test_client()
+
+            # Album anlegen, damit das Timelapse-Panel im Sidebar erscheint
+            create_album_response = client.post(
+                "/albums",
+                data={"name": "Aging Test", "q": "", "per_page": 24},
+            )
+            self.assertEqual(create_album_response.status_code, 200)
+
+            with sqlite3.connect(db_path) as conn:
+                album_row = conn.execute("SELECT id FROM albums WHERE name = ?", ("Aging Test",)).fetchone()
+            self.assertIsNotNone(album_row)
+            album_id = int(album_row[0])
+
+            sidebar_response = client.get(f"/albums/sidebar?album_id={album_id}")
+            self.assertEqual(sidebar_response.status_code, 200)
+            sidebar_html = sidebar_response.get_data(as_text=True)
+            self.assertIn("Aging-Timelapse", sidebar_html)
+            self.assertIn("timelapse-start-btn", sidebar_html)
+
+            # Validierung: person fehlt
+            bad_response = client.post(
+                f"/api/albums/{album_id}/timelapse",
+                json={"fps": 24},
+            )
+            self.assertEqual(bad_response.status_code, 400)
+
+            # Simuliere bereits fertiges Video im Cache
+            job_id = f"album_{album_id}_marie_curie"
+            export_path = cache_dir / "exports" / f"{job_id}.mp4"
+            export_path.parent.mkdir(parents=True, exist_ok=True)
+            export_path.write_bytes(b"fake-mp4")
+
+            start_response = client.post(
+                f"/api/albums/{album_id}/timelapse",
+                json={"person": "Marie Curie", "fps": 24, "hold": 24, "morph": 48, "size": 512},
+            )
+            self.assertEqual(start_response.status_code, 200)
+            start_payload = start_response.get_json()
+            assert start_payload is not None
+            self.assertTrue(start_payload["ok"])
+            self.assertIn(f"/api/albums/timelapse/download/{job_id}", start_payload["download_url"])
+
+            status_response = client.get(f"/api/albums/timelapse/status/{job_id}")
+            self.assertEqual(status_response.status_code, 200)
+            status_payload = status_response.get_json()
+            assert status_payload is not None
+            self.assertEqual(status_payload["status"], "done")
+
+            download_response = client.get(f"/api/albums/timelapse/download/{job_id}")
+            self.assertEqual(download_response.status_code, 200)
+            self.assertEqual(download_response.mimetype, "video/mp4")
+            self.assertEqual(download_response.data, b"fake-mp4")
+
 
 if __name__ == "__main__":
     unittest.main()

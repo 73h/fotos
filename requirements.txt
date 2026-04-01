@@ -6,3 +6,6 @@ numpy
 Pillow
 Flask
 pytest
+opencv-python
+# Optional: fuer Delaunay-Morphing (deutlich bessere Uebergaenge)
+# scipy
