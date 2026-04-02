@@ -89,6 +89,168 @@
       </div>
     </section>
 
+    <!-- KI & Qualitäts-Einstellungen Section -->
+    <section class="admin-section">
+      <h2>⚙️ KI & Qualitäts-Einstellungen</h2>
+      <div class="settings-tabs">
+        <button type="button" class="tab-button active" onclick="switchSettingsTab('yolo')">🎯 YOLO</button>
+        <button type="button" class="tab-button" onclick="switchSettingsTab('persons')">👤 Personen</button>
+        <button type="button" class="tab-button" onclick="switchSettingsTab('insightface')">🧠 InsightFace</button>
+        <button type="button" class="tab-button" onclick="switchSettingsTab('timelapse')">🎬 Timelapse</button>
+      </div>
+
+      <!-- YOLO Tab -->
+      <div id="yolo-tab" class="settings-tab active">
+        <div class="form-group">
+          <label for="yolo-model-input">Modell:</label>
+          <select id="yolo-model-input" class="form-control">
+            <option value="yolov8n.pt">yolov8n (schnell, gute Balance)</option>
+            <option value="yolov8s.pt">yolov8s (bessere Qualität)</option>
+            <option value="yolov8m.pt">yolov8m (beste Qualität, langsamer)</option>
+            <option value="yolov8l.pt">yolov8l (sehr langsam)</option>
+          </select>
+          <small>Größere Modelle = bessere Genauigkeit, aber langsamer.</small>
+        </div>
+
+        <div class="form-group">
+          <label for="yolo-confidence-input">Konfidenz (0.0-1.0):</label>
+          <input type="number" id="yolo-confidence-input" class="form-control" min="0" max="1" step="0.05" value="0.25" />
+          <small>Niedriger = mehr erkannte Objekte. Standard: 0.25</small>
+        </div>
+
+        <div class="form-group">
+          <label for="yolo-device-input">Device:</label>
+          <select id="yolo-device-input" class="form-control">
+            <option value="0">GPU (CUDA Device 0)</option>
+            <option value="1">GPU (CUDA Device 1)</option>
+            <option value="cpu">CPU</option>
+          </select>
+          <small>GPU ist deutlich schneller.</small>
+        </div>
+      </div>
+
+      <!-- Personen Tab -->
+      <div id="persons-tab" class="settings-tab">
+        <div class="form-group">
+          <label for="person-backend-db-select">Backend:</label>
+          <select id="person-backend-db-select" class="form-control">
+            <option value="auto">auto (versucht InsightFace, fällt auf Histogram zurück)</option>
+            <option value="insightface">InsightFace (beste Qualität)</option>
+            <option value="histogram">Histogram (schneller Fallback)</option>
+          </select>
+          <small>InsightFace bietet deutlich bessere Matching-Qualität.</small>
+        </div>
+
+        <div class="form-group">
+          <label for="person-threshold-input">Matching-Schwelle (0.0-1.0):</label>
+          <input type="number" id="person-threshold-input" class="form-control" min="0" max="1" step="0.01" value="0.38" />
+          <small>Niedriger = mehr Matches (liberal). Standard: 0.38</small>
+        </div>
+
+        <div class="form-group">
+          <label for="person-topk-input">Top-K Ergebnisse:</label>
+          <input type="number" id="person-topk-input" class="form-control" min="1" max="20" step="1" value="3" />
+          <small>Wie viele beste Matches pro Foto zurückgeben.</small>
+        </div>
+
+        <div class="form-group checkbox">
+          <input type="checkbox" id="person-fallback-check" class="form-control" checked />
+          <label for="person-fallback-check">Vollbild-Fallback verwenden</label>
+        </div>
+      </div>
+
+      <!-- InsightFace Tab -->
+      <div id="insightface-tab" class="settings-tab">
+        <div class="form-group">
+          <label for="insightface-model-input">Modell:</label>
+          <select id="insightface-model-input" class="form-control">
+            <option value="buffalo_l">buffalo_l (beste Qualität, mehr VRAM)</option>
+            <option value="buffalo_s">buffalo_s (gute Balance)</option>
+            <option value="buffalo_sc">buffalo_sc (schnell, weniger Speicher)</option>
+          </select>
+          <small>buffalo_l bietet beste Genauigkeit bei Gesichtserkennung.</small>
+        </div>
+
+        <div class="form-group">
+          <label for="insightface-ctx-input">GPU Device:</label>
+          <input type="number" id="insightface-ctx-input" class="form-control" value="0" />
+          <small>0+ für GPU Devices, negativ für CPU.</small>
+        </div>
+
+        <div class="form-group">
+          <label for="insightface-detsize-input">Detection Size (HxW):</label>
+          <input type="text" id="insightface-detsize-input" class="form-control" value="640,640" />
+          <small>Format: "breite,höhe" z.B. "640,640" oder "1280,1280" für bessere Qualität.</small>
+        </div>
+      </div>
+
+      <!-- Timelapse Tab -->
+      <div id="timelapse-tab" class="settings-tab">
+        <div class="form-group">
+          <label for="timelapse-backend-input">Backend:</label>
+          <select id="timelapse-backend-input" class="form-control">
+            <option value="auto">auto (best verfügbar)</option>
+            <option value="onnx">ONNX (schnell, wenn verfügbar)</option>
+            <option value="superres">SuperResolution</option>
+            <option value="local">Lokal</option>
+          </select>
+          <small>ONNX ist schneller wenn verfügbar.</small>
+        </div>
+
+        <h3 style="margin-top: 20px; font-size: 16px; color: #333;">📊 SuperResolution</h3>
+
+        <div class="form-group">
+          <label for="timelapse-superres-name-input">Modell:</label>
+          <select id="timelapse-superres-name-input" class="form-control">
+            <option value="espcn">ESPCN (schnell)</option>
+            <option value="fsrcnn">FSRCNN (bessere Qualität)</option>
+            <option value="lapsrn">LapSRN (beste Qualität)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="timelapse-superres-model-input">Model-Datei:</label>
+          <input type="text" id="timelapse-superres-model-input" class="form-control" placeholder="z.B. D:\models\ESPCN_x2.pb" />
+          <small>Absoluter Pfad zur SuperRes-Modell-Datei (.pb).</small>
+        </div>
+
+        <div class="form-group">
+          <label for="timelapse-superres-scale-input">Skalierung:</label>
+          <input type="number" id="timelapse-superres-scale-input" class="form-control" min="1" max="4" step="1" value="2" />
+          <small>2x schneller, 4x bessere Qualität aber viel langsamer.</small>
+        </div>
+
+        <h3 style="margin-top: 20px; font-size: 16px; color: #333;">🧠 ONNX Face Enhancer</h3>
+
+        <div class="form-group">
+          <label for="timelapse-face-onnx-model-input">ONNX Model-Datei:</label>
+          <input type="text" id="timelapse-face-onnx-model-input" class="form-control" placeholder="z.B. D:\models\face_enhancer.onnx" />
+          <small>Absoluter Pfad zur ONNX Gesichtserkennung-Modell-Datei (.onnx).</small>
+        </div>
+
+        <div class="form-group">
+          <label for="timelapse-face-onnx-provider-input">ONNX Provider:</label>
+          <select id="timelapse-face-onnx-provider-input" class="form-control">
+            <option value="auto">auto (best verfügbar)</option>
+            <option value="cuda">CUDA (GPU)</option>
+            <option value="cpu">CPU</option>
+          </select>
+          <small>Execution Provider für ONNX Runtime.</small>
+        </div>
+
+        <div class="form-group">
+          <label for="timelapse-onnx-size-input">Face Size:</label>
+          <input type="number" id="timelapse-onnx-size-input" class="form-control" min="32" max="512" step="32" value="256" />
+          <small>Größe für ONNX Gesichtserkennung (256 standard).</small>
+        </div>
+      </div>
+
+      <div class="config-actions">
+        <button type="button" class="btn btn-primary" onclick="saveQualitySettings(true)">💾 Qualitäts-Einstellungen speichern</button>
+        <span id="quality-save-status" class="config-save-status" aria-live="polite"></span>
+      </div>
+    </section>
+
     <!-- Operations Section -->
     <section class="admin-section">
       <h2>⚙️ Index-Operationen</h2>
@@ -185,10 +347,29 @@
 </div>
 
 <style>
+/* ===== Farbpalette ===== */
+:root {
+  --primary: #2563eb;      /* Kräftiges Blau */
+  --primary-dark: #1e40af;
+  --primary-light: #3b82f6;
+  --accent: #10b981;       /* Grün */
+  --accent-dark: #059669;
+  --warning: #f59e0b;      /* Amber */
+  --danger: #ef4444;       /* Rot */
+  --text-primary: #1f2937; /* Dark Gray */
+  --text-secondary: #6b7280; /* Medium Gray */
+  --border: #e5e7eb;       /* Light Gray */
+  --bg-light: #f9fafb;     /* Very Light Gray */
+  --bg-white: #ffffff;
+  --success: #10b981;      /* Grün */
+}
+
 .admin-container {
   max-width: 1200px;
   margin: 0 auto;
   padding: 20px;
+  background: linear-gradient(135deg, #f0f4f8 0%, #f9fafb 100%);
+  min-height: 100vh;
 }
 
 .admin-header {
@@ -196,13 +377,15 @@
   justify-content: space-between;
   align-items: center;
   margin-bottom: 30px;
-  border-bottom: 2px solid #e0e0e0;
-  padding-bottom: 15px;
+  border-bottom: 3px solid var(--primary);
+  padding-bottom: 20px;
 }
 
 .admin-header h1 {
   margin: 0;
-  font-size: 28px;
+  font-size: 32px;
+  color: var(--text-primary);
+  font-weight: 700;
 }
 
 .admin-nav {
@@ -211,15 +394,20 @@
 }
 
 .nav-link {
-  color: #007bff;
+  color: var(--primary);
   text-decoration: none;
-  padding: 8px 12px;
-  border-radius: 4px;
-  transition: background-color 0.2s;
+  padding: 10px 16px;
+  border-radius: 6px;
+  transition: all 0.2s;
+  font-weight: 500;
+  background: var(--bg-white);
+  border: 2px solid transparent;
 }
 
 .nav-link:hover {
-  background-color: #f0f0f0;
+  background-color: var(--primary-light);
+  color: white;
+  border-color: var(--primary);
 }
 
 .admin-content {
@@ -229,34 +417,101 @@
 }
 
 .admin-section {
-  background: #f9f9f9;
-  padding: 20px;
-  border-radius: 6px;
-  border: 1px solid #e0e0e0;
+  background: var(--bg-white);
+  padding: 25px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  transition: all 0.2s;
+}
+
+.admin-section:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
 
 .admin-section h2 {
   margin-top: 0;
-  font-size: 20px;
-  margin-bottom: 15px;
-  color: #222;
-}
-
-.config-form {
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-}
-
-.config-actions {
+  font-size: 22px;
+  margin-bottom: 20px;
+  color: var(--text-primary);
+  font-weight: 700;
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
+.settings-tabs {
+  display: flex;
+  gap: 5px;
+  margin-bottom: 25px;
+  border-bottom: 2px solid var(--border);
+  background: var(--bg-light);
+  padding: 5px;
+  border-radius: 8px;
+}
+
+.tab-button {
+  padding: 12px 16px;
+  border: none;
+  background: transparent;
+  border-bottom: 3px solid transparent;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  transition: all 0.2s;
+  border-radius: 6px 6px 0 0;
+}
+
+.tab-button:hover {
+  color: var(--primary);
+  background: rgba(37, 99, 235, 0.05);
+}
+
+.tab-button.active {
+  color: var(--primary);
+  background: var(--bg-white);
+  border-bottom-color: var(--primary);
+  box-shadow: 0 -2px 4px rgba(37, 99, 235, 0.1);
+}
+
+.settings-tab {
+  display: none;
+  animation: fadeIn 0.2s ease;
+}
+
+.settings-tab.active {
+  display: block;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.config-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.config-actions {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-top: 10px;
+}
+
 .config-save-status {
   font-size: 13px;
-  color: #2e7d32;
+  color: var(--success);
+  font-weight: 600;
+  animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(-10px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 
 .form-group {
@@ -265,168 +520,216 @@
 }
 
 .form-group label {
-  font-weight: 600;
-  margin-bottom: 5px;
+  font-weight: 700;
+  margin-bottom: 8px;
   font-size: 14px;
-  color: #222;
+  color: var(--text-primary);
 }
 
 .form-group small {
   font-size: 12px;
-  color: #666;
-  margin-top: 3px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  line-height: 1.4;
 }
 
 .photo-roots-textarea {
-  padding: 10px;
-  border: 1px solid #999;
-  border-radius: 4px;
-  font-family: monospace;
+  padding: 12px;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  font-family: 'Courier New', monospace;
   font-size: 13px;
   resize: vertical;
-  color: #333;
-  background-color: #fff;
+  color: var(--text-primary);
+  background-color: var(--bg-white);
+  transition: all 0.2s;
+}
+
+.photo-roots-textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
 
 .form-control {
-  padding: 8px;
-  border: 1px solid #999;
-  border-radius: 4px;
+  padding: 10px 12px;
+  border: 2px solid var(--border);
+  border-radius: 8px;
   font-size: 14px;
-  color: #333;
-  background-color: #fff;
+  color: var(--text-primary);
+  background-color: var(--bg-white);
+  transition: all 0.2s;
 }
 
 .form-control:focus {
   outline: none;
-  border-color: #007bff;
-  box-shadow: 0 0 3px rgba(0, 123, 255, 0.3);
-  color: #333;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.form-control:hover {
+  border-color: var(--primary-light);
 }
 
 .form-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 15px;
+  gap: 18px;
 }
 
 .form-group.checkbox {
   flex-direction: row;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .form-group.checkbox input {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   cursor: pointer;
+  accent-color: var(--primary);
 }
 
 .form-group.checkbox label {
   margin-bottom: 0;
-  font-weight: normal;
+  font-weight: 500;
 }
 
 .operations-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 20px;
 }
 
 .operation-card {
-  background: white;
-  padding: 15px;
-  border-radius: 6px;
-  border: 1px solid #d0d0d0;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  background: linear-gradient(135deg, var(--bg-white) 0%, var(--bg-light) 100%);
+  padding: 20px;
+  border-radius: 12px;
+  border: 2px solid var(--border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  transition: all 0.3s;
+}
+
+.operation-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+  border-color: var(--primary);
 }
 
 .operation-card h3 {
-  margin: 0 0 10px 0;
-  font-size: 16px;
-  color: #222;
+  margin: 0 0 12px 0;
+  font-size: 18px;
+  color: var(--text-primary);
+  font-weight: 700;
 }
 
 .operation-card p {
-  margin: 0 0 15px 0;
-  font-size: 13px;
-  color: #444;
-  line-height: 1.4;
+  margin: 0 0 16px 0;
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.5;
 }
 
 .btn {
-  padding: 10px 20px;
+  padding: 12px 20px;
   border: none;
-  border-radius: 4px;
+  border-radius: 8px;
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.btn:active {
+  transform: scale(0.98);
 }
 
 .btn-primary {
-  background-color: #007bff;
+  background-color: var(--primary);
   color: white;
+  border: 2px solid var(--primary);
 }
 
 .btn-primary:hover {
-  background-color: #0056b3;
+  background-color: var(--primary-dark);
+  border-color: var(--primary-dark);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
 }
 
 .btn-secondary {
-  background-color: #6c757d;
+  background-color: var(--text-secondary);
   color: white;
+  border: 2px solid var(--text-secondary);
 }
 
 .btn-secondary:hover {
-  background-color: #545b62;
+  background-color: var(--text-primary);
+  border-color: var(--text-primary);
+  box-shadow: 0 4px 12px rgba(31, 41, 55, 0.3);
 }
 
 .btn-danger {
-  background-color: #dc3545;
+  background-color: var(--danger);
   color: white;
+  border: 2px solid var(--danger);
 }
 
 .btn-danger:hover {
-  background-color: #c82333;
+  background-color: #dc2626;
+  border-color: #dc2626;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
 }
 
 .jobs-container {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .job-list-item {
-  background: #fff;
-  border: 1px solid #d0d0d0;
-  border-radius: 6px;
-  padding: 10px;
+  background: linear-gradient(135deg, var(--bg-white) 0%, var(--bg-light) 100%);
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 10px;
+  gap: 15px;
+  transition: all 0.2s;
+}
+
+.job-list-item:hover {
+  border-color: var(--primary);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.1);
 }
 
 .job-list-main {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  flex: 1;
 }
 
 .job-list-title {
-  font-weight: 600;
-  color: #222;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-size: 14px;
 }
 
 .job-list-meta {
   font-size: 12px;
-  color: #555;
+  color: var(--text-secondary);
 }
 
 .text-muted {
-  color: #999;
+  color: var(--text-secondary);
   font-style: italic;
+  text-align: center;
+  padding: 20px;
 }
 
 /* Job Progress Modal */
@@ -441,6 +744,7 @@
   z-index: 1000;
   justify-content: center;
   align-items: center;
+  backdrop-filter: blur(2px);
 }
 
 .job-modal.active {
@@ -448,49 +752,53 @@
 }
 
 .job-modal-content {
-  background: white;
+  background: var(--bg-white);
   padding: 30px;
-  border-radius: 8px;
+  border-radius: 16px;
   max-width: 500px;
   width: 90%;
   max-height: 80vh;
   overflow-y: auto;
-  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
 }
 
 .job-modal-content h3 {
   margin: 0 0 20px 0;
-  font-size: 22px;
+  font-size: 24px;
+  color: var(--text-primary);
+  font-weight: 700;
 }
 
 .job-info {
-  background: #f5f5f5;
-  padding: 15px;
-  border-radius: 4px;
+  background: var(--bg-light);
+  padding: 16px;
+  border-radius: 10px;
   margin-bottom: 20px;
   font-size: 14px;
+  border-left: 4px solid var(--primary);
 }
 
 .job-info p {
   margin: 8px 0;
+  color: var(--text-primary);
 }
 
 .progress-container {
-  margin: 20px 0;
+  margin: 25px 0;
 }
 
 .progress-bar {
   width: 100%;
-  height: 30px;
-  background-color: #e0e0e0;
-  border-radius: 4px;
+  height: 32px;
+  background-color: var(--bg-light);
+  border-radius: 8px;
   overflow: hidden;
-  border: 1px solid #ccc;
+  border: 2px solid var(--border);
 }
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #28a745, #20c997);
+  background: linear-gradient(90deg, var(--primary) 0%, var(--accent) 100%);
   transition: width 0.3s ease;
   display: flex;
   align-items: center;
@@ -498,38 +806,41 @@
   color: white;
   font-weight: bold;
   font-size: 12px;
+  box-shadow: 0 0 10px rgba(37, 99, 235, 0.3);
 }
 
 .progress-text {
-  margin: 8px 0 0 0;
+  margin: 10px 0 0 0;
   font-size: 13px;
-  color: #666;
+  color: var(--text-secondary);
   text-align: center;
+  font-weight: 500;
 }
 
 .job-error {
-  background-color: #f8d7da;
-  border: 1px solid #f5c6cb;
-  color: #721c24;
-  padding: 12px;
-  border-radius: 4px;
+  background-color: #fee2e2;
+  border: 2px solid var(--danger);
+  color: #7f1d1d;
+  padding: 14px;
+  border-radius: 10px;
   margin-bottom: 20px;
   font-size: 13px;
+  border-left: 4px solid var(--danger);
 }
 
 .job-actions {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   justify-content: flex-end;
 }
 
 .job-actions .btn {
-  padding: 10px 15px;
+  padding: 10px 16px;
 }
 
 @media (max-width: 768px) {
   .admin-section {
-    padding: 15px;
+    padding: 16px;
   }
 
   .operations-grid {
@@ -544,6 +855,10 @@
     flex-direction: column;
     gap: 15px;
     align-items: flex-start;
+  }
+
+  .admin-header h1 {
+    font-size: 24px;
   }
 }
 </style>
@@ -889,10 +1204,128 @@ function formatSeconds(seconds) {
   return `${secs}s`;
 }
 
+// Settings-Tabs
+function switchSettingsTab(tabName) {
+  // Hide all tabs
+  document.querySelectorAll('.settings-tab').forEach(tab => {
+    tab.classList.remove('active');
+  });
+  // Deactivate all buttons
+  document.querySelectorAll('.tab-button').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  // Show selected tab
+  const selectedTab = document.getElementById(tabName + '-tab');
+  if (selectedTab) {
+    selectedTab.classList.add('active');
+  }
+  // Activate button
+  event.target.classList.add('active');
+}
+
+function collectQualitySettings() {
+  return {
+    yolo_model: document.getElementById('yolo-model-input').value,
+    yolo_confidence: parseFloat(document.getElementById('yolo-confidence-input').value),
+    yolo_device: document.getElementById('yolo-device-input').value,
+    person_backend: document.getElementById('person-backend-db-select').value || 'auto',
+    person_threshold: parseFloat(document.getElementById('person-threshold-input').value),
+    person_top_k: parseInt(document.getElementById('person-topk-input').value),
+    person_full_image_fallback: document.getElementById('person-fallback-check').checked,
+    insightface_model: document.getElementById('insightface-model-input').value,
+    insightface_ctx: parseInt(document.getElementById('insightface-ctx-input').value),
+    insightface_det_size: document.getElementById('insightface-detsize-input').value,
+    timelapse_ai_backend: document.getElementById('timelapse-backend-input').value,
+    timelapse_superres_model: document.getElementById('timelapse-superres-model-input').value,
+    timelapse_superres_name: document.getElementById('timelapse-superres-name-input').value,
+    timelapse_superres_scale: parseInt(document.getElementById('timelapse-superres-scale-input').value),
+    timelapse_face_onnx_model: document.getElementById('timelapse-face-onnx-model-input').value,
+    timelapse_face_onnx_provider: document.getElementById('timelapse-face-onnx-provider-input').value,
+    timelapse_face_onnx_size: parseInt(document.getElementById('timelapse-onnx-size-input').value),
+  };
+}
+
+function applyQualitySettings(config) {
+  if (config.yolo_model) document.getElementById('yolo-model-input').value = config.yolo_model;
+  if (config.yolo_confidence !== undefined) document.getElementById('yolo-confidence-input').value = config.yolo_confidence;
+  if (config.yolo_device) document.getElementById('yolo-device-input').value = config.yolo_device;
+  if (config.person_backend) document.getElementById('person-backend-db-select').value = config.person_backend;
+  if (config.person_threshold !== undefined) document.getElementById('person-threshold-input').value = config.person_threshold;
+  if (config.person_top_k) document.getElementById('person-topk-input').value = config.person_top_k;
+  if (config.person_full_image_fallback !== undefined) document.getElementById('person-fallback-check').checked = config.person_full_image_fallback;
+  if (config.insightface_model) document.getElementById('insightface-model-input').value = config.insightface_model;
+  if (config.insightface_ctx !== undefined) document.getElementById('insightface-ctx-input').value = config.insightface_ctx;
+  if (config.insightface_det_size) document.getElementById('insightface-detsize-input').value = config.insightface_det_size;
+  if (config.timelapse_ai_backend) document.getElementById('timelapse-backend-input').value = config.timelapse_ai_backend;
+  if (config.timelapse_superres_model) document.getElementById('timelapse-superres-model-input').value = config.timelapse_superres_model;
+  if (config.timelapse_superres_name) document.getElementById('timelapse-superres-name-input').value = config.timelapse_superres_name;
+  if (config.timelapse_superres_scale) document.getElementById('timelapse-superres-scale-input').value = config.timelapse_superres_scale;
+  if (config.timelapse_face_onnx_model) document.getElementById('timelapse-face-onnx-model-input').value = config.timelapse_face_onnx_model;
+  if (config.timelapse_face_onnx_provider) document.getElementById('timelapse-face-onnx-provider-input').value = config.timelapse_face_onnx_provider;
+  if (config.timelapse_face_onnx_size) document.getElementById('timelapse-onnx-size-input').value = config.timelapse_face_onnx_size;
+}
+
+function setQualitySaveStatus(message, isError = false) {
+  const statusEl = document.getElementById('quality-save-status');
+  if (!statusEl) return;
+  statusEl.textContent = message;
+  statusEl.style.color = isError ? '#b71c1c' : '#2e7d32';
+}
+
+async function saveQualitySettings(showFeedback = false) {
+  const settings = collectQualitySettings();
+  try {
+    await saveAdminConfig(settings);
+    if (showFeedback) {
+      setQualitySaveStatus('Qualitäts-Einstellungen gespeichert.');
+    }
+  } catch (err) {
+    if (showFeedback) {
+      setQualitySaveStatus('Speichern fehlgeschlagen.', true);
+    }
+  }
+}
+
+function setupQualitySettingsAutoSave() {
+  const ids = [
+    'yolo-model-input',
+    'yolo-confidence-input',
+    'yolo-device-input',
+    'person-backend-db-select',
+    'person-threshold-input',
+    'person-topk-input',
+    'person-fallback-check',
+    'insightface-model-input',
+    'insightface-ctx-input',
+    'insightface-detsize-input',
+    'timelapse-backend-input',
+    'timelapse-superres-model-input',
+    'timelapse-superres-name-input',
+    'timelapse-superres-scale-input',
+    'timelapse-face-onnx-model-input',
+    'timelapse-face-onnx-provider-input',
+    'timelapse-onnx-size-input',
+  ];
+  let qualitySaveTimer = null;
+  ids.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', () => {
+      if (qualitySaveTimer) clearTimeout(qualitySaveTimer);
+      qualitySaveTimer = setTimeout(() => saveQualitySettings(false), 500);
+    });
+    el.addEventListener('change', () => {
+      if (qualitySaveTimer) clearTimeout(qualitySaveTimer);
+      qualitySaveTimer = setTimeout(() => saveQualitySettings(false), 500);
+    });
+  });
+}
+
 // Lade Konfiguration beim Start
 window.addEventListener('load', () => {
   loadAdminConfig();
   setupConfigAutoSave();
+  setupQualitySettingsAutoSave();
   startJobsListPolling();
 });
 </script>

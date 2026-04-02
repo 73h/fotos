@@ -20,9 +20,55 @@ from .store import (
     upsert_person,
 )
 
-_PERSON_THRESHOLD = float(os.getenv("FOTOS_PERSON_THRESHOLD", "0.38"))
-_PERSON_TOP_K = int(os.getenv("FOTOS_PERSON_TOP_K", "3"))
-_USE_FULL_IMAGE_FALLBACK = os.getenv("FOTOS_PERSON_FULL_IMAGE_FALLBACK", "1") == "1"
+# Globale Variablen für Personen-Einstellungen
+_PERSON_THRESHOLD = None
+_PERSON_TOP_K = None
+_USE_FULL_IMAGE_FALLBACK = None
+
+
+def _load_person_settings_from_db(db_path: Path | None = None) -> tuple[float, int, bool]:
+    """Lädt Personen-Einstellungen aus der Datenbank oder ENV-Variablen."""
+    global _PERSON_THRESHOLD, _PERSON_TOP_K, _USE_FULL_IMAGE_FALLBACK
+
+    threshold = 0.38
+    top_k = 3
+    use_fallback = True
+
+    # Versuche aus DB zu laden
+    if db_path and db_path.exists():
+        try:
+            from ..index.store import get_admin_config
+            config = get_admin_config(db_path)
+            threshold = float(config.get("person_threshold", threshold))
+            top_k = int(config.get("person_top_k", top_k))
+            use_fallback = bool(config.get("person_full_image_fallback", use_fallback))
+        except Exception:
+            pass
+
+    # ENV-Variablen überschreiben (für Fallback/Kompabilität)
+    try:
+        threshold = float(os.getenv("FOTOS_PERSON_THRESHOLD", str(threshold)))
+    except ValueError:
+        pass
+
+    try:
+        top_k = int(os.getenv("FOTOS_PERSON_TOP_K", str(top_k)))
+    except ValueError:
+        pass
+
+    use_fallback = os.getenv("FOTOS_PERSON_FULL_IMAGE_FALLBACK", "1") == "1"
+
+    _PERSON_THRESHOLD = threshold
+    _PERSON_TOP_K = top_k
+    _USE_FULL_IMAGE_FALLBACK = use_fallback
+
+    return _PERSON_THRESHOLD, _PERSON_TOP_K, _USE_FULL_IMAGE_FALLBACK
+
+
+def initialize_person_settings(db_path: Path | None = None) -> None:
+    """Initialisiert Personen-Einstellungen zu Startup (kann aus DB geladen werden)."""
+    global _PERSON_THRESHOLD, _PERSON_TOP_K, _USE_FULL_IMAGE_FALLBACK
+    _PERSON_THRESHOLD, _PERSON_TOP_K, _USE_FULL_IMAGE_FALLBACK = _load_person_settings_from_db(db_path)
 
 
 @dataclass(frozen=True)
@@ -64,6 +110,10 @@ def extract_person_signatures(
                     smile_score = backend.smile_score_from_image(crop)
                     signatures.append((vector, smile_score))
 
+            global _USE_FULL_IMAGE_FALLBACK
+            if _USE_FULL_IMAGE_FALLBACK is None:
+                _USE_FULL_IMAGE_FALLBACK = True
+
             if not signatures and _USE_FULL_IMAGE_FALLBACK:
                 vector = backend.vector_from_image(image)
                 if vector is not None:
@@ -89,6 +139,10 @@ def _score_signature_against_references(
     references_by_person: dict[tuple[int, str], list[list[float]]],
     smile_score: float | None = None,
 ) -> list[PersonMatch]:
+    global _PERSON_THRESHOLD
+    if _PERSON_THRESHOLD is None:
+        _PERSON_THRESHOLD = 0.38
+
     scored: list[PersonMatch] = []
     for (person_id, person_name), vectors in references_by_person.items():
         if not vectors:
@@ -104,6 +158,10 @@ def _score_signature_against_references(
                     smile_score=smile_score,
                 )
             )
+
+    global _PERSON_TOP_K
+    if _PERSON_TOP_K is None:
+        _PERSON_TOP_K = 3
 
     scored.sort(key=lambda item: item.score, reverse=True)
     return scored[:_PERSON_TOP_K]

@@ -28,6 +28,27 @@ def _load_env_timelapse(project_root: Path) -> None:
             os.environ[key] = value
 
 
+def _initialize_settings(db_path: Path) -> None:
+    """Initialisiert alle Settings-Module mit DB-Pfad."""
+    try:
+        from ..detectors.labels import initialize_yolo_settings
+        initialize_yolo_settings(db_path)
+    except Exception:
+        pass
+
+    try:
+        from ..persons.service import initialize_person_settings
+        initialize_person_settings(db_path)
+    except Exception:
+        pass
+
+    try:
+        from ..persons.embeddings import initialize_insightface_settings
+        initialize_insightface_settings(db_path)
+    except Exception:
+        pass
+
+
 def create_app(
     app_config: AppConfig,
     custom_db_path: str | None = None,
@@ -44,6 +65,9 @@ def create_app(
     app.config["CACHE_DIR"] = app_config.resolve_cache_dir(custom_cache_dir)
     app.config["THUMB_SIZE"] = 360
     ensure_schema(app.config["DB_PATH"])
+
+    # Initialisiere alle Settings-Module mit DB-Pfad
+    _initialize_settings(app.config["DB_PATH"])
 
     from .routes import web_blueprint
 

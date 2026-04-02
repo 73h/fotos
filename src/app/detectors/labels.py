@@ -8,11 +8,51 @@ except Exception:
     YOLO = None
 
 
-def _resolve_yolo_device() -> str:
-    """Bestimmt das Ziel-Device fuer YOLO (cuda/cpu), konfigurierbar per FOTOS_YOLO_DEVICE."""
-    device = os.getenv("FOTOS_YOLO_DEVICE", "auto").strip().lower()
-    if device != "auto":
-        return device
+# Globale Variablen für Settings (werden beim Start initialisiert)
+_YOLO_MODEL_NAME = None
+_YOLO_CONFIDENCE = None
+_YOLO_DEVICE = None
+
+
+def _load_yolo_settings_from_db(db_path: Path | None = None) -> tuple[str, float, str]:
+    """Lädt YOLO-Einstellungen aus der Datenbank oder ENV-Variablen."""
+    global _YOLO_MODEL_NAME, _YOLO_CONFIDENCE, _YOLO_DEVICE
+
+    model = "yolov8n.pt"
+    confidence = 0.25
+    device = "auto"
+
+    # Versuche aus DB zu laden
+    if db_path and db_path.exists():
+        try:
+            from ..index.store import get_admin_config
+            config = get_admin_config(db_path)
+            model = str(config.get("yolo_model", model))
+            confidence = float(config.get("yolo_confidence", confidence))
+            device_value = config.get("yolo_device", "0")
+            device = str(device_value) if device_value else "auto"
+        except Exception:
+            pass
+
+    # ENV-Variablen überschreiben (für Fallback/Kompabilität)
+    model = os.getenv("FOTOS_YOLO_MODEL", model)
+    try:
+        confidence = float(os.getenv("FOTOS_YOLO_CONF", str(confidence)))
+    except ValueError:
+        pass
+    device_env = os.getenv("FOTOS_YOLO_DEVICE", "").strip().lower()
+    if device_env and device_env != "auto":
+        device = device_env
+
+    _YOLO_MODEL_NAME = model
+    _YOLO_CONFIDENCE = confidence
+    _YOLO_DEVICE = device if device != "auto" else _resolve_yolo_device_internal()
+
+    return _YOLO_MODEL_NAME, _YOLO_CONFIDENCE, _YOLO_DEVICE
+
+
+def _resolve_yolo_device_internal() -> str:
+    """Bestimmt automatisch das beste Device (CUDA/CPU)."""
     try:
         import torch
         return "0" if torch.cuda.is_available() else "cpu"
@@ -57,16 +97,32 @@ _YOLO_ANIMAL_CLASSES = {
     "giraffe",
 }
 
+
 _PLACE_KEYWORDS = {"beach", "mountain", "city", "wald", "see", "forest", "lake", "street"}
 
-_YOLO_MODEL_NAME = os.getenv("FOTOS_YOLO_MODEL", "yolov8n.pt")
-_YOLO_CONFIDENCE = float(os.getenv("FOTOS_YOLO_CONF", "0.25"))
+
+def initialize_yolo_settings(db_path: Path | None = None) -> None:
+    """Initialisiert YOLO-Einstellungen zu Startup (kann aus DB geladen werden)."""
+    global _YOLO_MODEL_NAME, _YOLO_CONFIDENCE, _YOLO_DEVICE
+    _YOLO_MODEL_NAME, _YOLO_CONFIDENCE, _YOLO_DEVICE = _load_yolo_settings_from_db(db_path)
+
+
+def _resolve_yolo_device() -> str:
+    """Gibt das aktuelle YOLO-Device zurück."""
+    global _YOLO_DEVICE
+    if _YOLO_DEVICE is None:
+        _YOLO_DEVICE = _resolve_yolo_device_internal()
+    return _YOLO_DEVICE
 
 
 def detect_person_boxes(path: Path) -> list[tuple[int, int, int, int]]:
     model = _load_model()
     if model is None:
         return []
+
+    global _YOLO_CONFIDENCE
+    if _YOLO_CONFIDENCE is None:
+        _YOLO_CONFIDENCE = 0.25
 
     try:
         results = model.predict(source=str(path), conf=_YOLO_CONFIDENCE, verbose=False, device=_resolve_yolo_device())
@@ -98,8 +154,11 @@ def detect_person_boxes(path: Path) -> list[tuple[int, int, int, int]]:
 
 @lru_cache(maxsize=1)
 def _load_model():
+    global _YOLO_MODEL_NAME
     if YOLO is None:
         return None
+    if _YOLO_MODEL_NAME is None:
+        _YOLO_MODEL_NAME = "yolov8n.pt"
     return YOLO(_YOLO_MODEL_NAME)
 
 
@@ -119,6 +178,10 @@ def _labels_from_yolo(path: Path) -> set[str]:
     model = _load_model()
     if model is None:
         return set()
+
+    global _YOLO_CONFIDENCE
+    if _YOLO_CONFIDENCE is None:
+        _YOLO_CONFIDENCE = 0.25
 
     labels: set[str] = set()
     try:

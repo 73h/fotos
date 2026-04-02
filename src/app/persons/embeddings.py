@@ -3,11 +3,58 @@ from __future__ import annotations
 from contextlib import redirect_stderr, redirect_stdout
 import logging
 import os
+from pathlib import Path
 from threading import Lock
 from typing import Any, cast
 
 import numpy as np
 from PIL import Image
+
+
+# Globale Variablen für InsightFace-Einstellungen
+_INSIGHTFACE_MODEL = None
+_INSIGHTFACE_CTX = None
+_INSIGHTFACE_DET_SIZE = None
+
+
+def _load_insightface_settings_from_db(db_path: Path | None = None) -> tuple[str, int, str]:
+    """Lädt InsightFace-Einstellungen aus der Datenbank oder ENV-Variablen."""
+    global _INSIGHTFACE_MODEL, _INSIGHTFACE_CTX, _INSIGHTFACE_DET_SIZE
+
+    model = "buffalo_l"
+    ctx = 0
+    det_size = "640,640"
+
+    # Versuche aus DB zu laden
+    if db_path and db_path.exists():
+        try:
+            from ..index.store import get_admin_config
+            config = get_admin_config(db_path)
+            model = str(config.get("insightface_model", model))
+            ctx = int(config.get("insightface_ctx", ctx))
+            det_size = str(config.get("insightface_det_size", det_size))
+        except Exception:
+            pass
+
+    # ENV-Variablen überschreiben (für Fallback/Kompabilität)
+    model = os.getenv("FOTOS_INSIGHTFACE_MODEL", model)
+    try:
+        ctx = int(os.getenv("FOTOS_INSIGHTFACE_CTX", str(ctx)))
+    except ValueError:
+        pass
+    det_size = os.getenv("FOTOS_INSIGHTFACE_DET_SIZE", det_size)
+
+    _INSIGHTFACE_MODEL = model
+    _INSIGHTFACE_CTX = ctx
+    _INSIGHTFACE_DET_SIZE = det_size
+
+    return _INSIGHTFACE_MODEL, _INSIGHTFACE_CTX, _INSIGHTFACE_DET_SIZE
+
+
+def initialize_insightface_settings(db_path: Path | None = None) -> None:
+    """Initialisiert InsightFace-Einstellungen zu Startup (kann aus DB geladen werden)."""
+    global _INSIGHTFACE_MODEL, _INSIGHTFACE_CTX, _INSIGHTFACE_DET_SIZE
+    _INSIGHTFACE_MODEL, _INSIGHTFACE_CTX, _INSIGHTFACE_DET_SIZE = _load_insightface_settings_from_db(db_path)
 
 
 def _normalize_vector(values: np.ndarray) -> np.ndarray:
@@ -65,9 +112,24 @@ class InsightFaceBackend(EmbeddingBackend):
         except Exception as error:  # pragma: no cover - optional dependency
             raise RuntimeError("InsightFace ist nicht installiert.") from error
 
-        model_name = os.getenv("FOTOS_INSIGHTFACE_MODEL", "buffalo_l")
-        context_id = int(os.getenv("FOTOS_INSIGHTFACE_CTX", "0"))
-        det_size = tuple(int(v.strip()) for v in os.getenv("FOTOS_INSIGHTFACE_DET_SIZE", "640,640").split(","))
+        global _INSIGHTFACE_MODEL, _INSIGHTFACE_CTX, _INSIGHTFACE_DET_SIZE
+
+        if _INSIGHTFACE_MODEL is None:
+            _INSIGHTFACE_MODEL = "buffalo_l"
+        if _INSIGHTFACE_CTX is None:
+            _INSIGHTFACE_CTX = 0
+        if _INSIGHTFACE_DET_SIZE is None:
+            _INSIGHTFACE_DET_SIZE = "640,640"
+
+        model_name = _INSIGHTFACE_MODEL
+        context_id = _INSIGHTFACE_CTX
+        det_size_str = _INSIGHTFACE_DET_SIZE
+
+        # Parse det_size
+        try:
+            det_size = tuple(int(v.strip()) for v in det_size_str.split(","))
+        except (ValueError, AttributeError):
+            det_size = (640, 640)
 
         def _init_app():
             app_obj = FaceAnalysis(name=model_name)
@@ -181,11 +243,21 @@ def _resolve_backend_cached(
 
 
 def resolve_backend(preferred_backend: str | None = None, strict: bool = False) -> EmbeddingBackend:
+    global _INSIGHTFACE_MODEL, _INSIGHTFACE_CTX, _INSIGHTFACE_DET_SIZE
+
     backend_name = (preferred_backend or os.getenv("FOTOS_PERSON_BACKEND", "auto")).strip().lower()
+
+    if _INSIGHTFACE_MODEL is None:
+        _INSIGHTFACE_MODEL = "buffalo_l"
+    if _INSIGHTFACE_CTX is None:
+        _INSIGHTFACE_CTX = 0
+    if _INSIGHTFACE_DET_SIZE is None:
+        _INSIGHTFACE_DET_SIZE = "640,640"
+
     return _resolve_backend_cached(
         backend_name=backend_name,
-        model_name=os.getenv("FOTOS_INSIGHTFACE_MODEL", "buffalo_l"),
-        context_id=os.getenv("FOTOS_INSIGHTFACE_CTX", "0"),
-        det_size=os.getenv("FOTOS_INSIGHTFACE_DET_SIZE", "640,640"),
+        model_name=_INSIGHTFACE_MODEL,
+        context_id=str(_INSIGHTFACE_CTX),
+        det_size=_INSIGHTFACE_DET_SIZE,
         strict=strict,
     )

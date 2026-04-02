@@ -13,13 +13,34 @@ from ..ingest import ImageRecord
 
 
 ADMIN_CONFIG_DEFAULTS: dict[str, object] = {
+    # Index-Einstellungen
     "photo_roots": [],
-    "person_backend": None,
     "force_reindex": False,
     "index_workers": 1,
     "near_duplicates": False,
     "phash_threshold": 6,
     "rematch_workers": 1,
+    # YOLO-Objekterkennung (für maximale Qualität + GPU)
+    "yolo_model": "yolov8n.pt",
+    "yolo_confidence": 0.25,
+    "yolo_device": "0",  # GPU-Device, "cpu" für CPU
+    # Personen-Matching (für maximale Qualität)
+    "person_backend": "insightface",  # "auto", "insightface" oder "histogram"
+    "person_threshold": 0.38,
+    "person_top_k": 3,
+    "person_full_image_fallback": True,
+    # InsightFace-Embeddings (GPU-optimiert)
+    "insightface_model": "buffalo_l",
+    "insightface_ctx": 0,  # GPU-Device, negative Werte für CPU
+    "insightface_det_size": "640,640",
+    # Timelapse-AI (GPU wenn verfügbar)
+    "timelapse_ai_backend": "auto",
+    "timelapse_superres_model": "",
+    "timelapse_superres_name": "espcn",
+    "timelapse_superres_scale": 2,
+    "timelapse_face_onnx_model": "",
+    "timelapse_face_onnx_provider": "auto",
+    "timelapse_face_onnx_size": 256,
 }
 
 
@@ -208,7 +229,7 @@ def _normalize_admin_config(raw_config: dict[str, object]) -> dict[str, object]:
 
     raw_backend = raw_config.get("person_backend")
     if raw_backend in (None, "", "auto", "insightface", "histogram"):
-        normalized["person_backend"] = raw_backend or None
+        normalized["person_backend"] = raw_backend or "insightface"
 
     normalized["force_reindex"] = bool(raw_config.get("force_reindex", normalized["force_reindex"]))
     normalized["near_duplicates"] = bool(raw_config.get("near_duplicates", normalized["near_duplicates"]))
@@ -225,6 +246,81 @@ def _normalize_admin_config(raw_config: dict[str, object]) -> dict[str, object]:
 
     try:
         normalized["rematch_workers"] = max(1, int(raw_config.get("rematch_workers", normalized["rematch_workers"])))
+    except (TypeError, ValueError):
+        pass
+
+    # YOLO-Einstellungen
+    yolo_model = raw_config.get("yolo_model", normalized["yolo_model"])
+    if isinstance(yolo_model, str) and yolo_model.strip():
+        normalized["yolo_model"] = yolo_model.strip()
+
+    try:
+        normalized["yolo_confidence"] = max(0.0, min(1.0, float(raw_config.get("yolo_confidence", normalized["yolo_confidence"]))))
+    except (TypeError, ValueError):
+        pass
+
+    yolo_device = raw_config.get("yolo_device", normalized["yolo_device"])
+    if isinstance(yolo_device, str):
+        normalized["yolo_device"] = yolo_device.strip() or "0"
+
+    # Personen-Backend (legacy support für None)
+    if raw_config.get("person_backend") is None:
+        normalized["person_backend"] = "insightface"
+
+    try:
+        normalized["person_threshold"] = max(0.0, min(1.0, float(raw_config.get("person_threshold", normalized["person_threshold"]))))
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        normalized["person_top_k"] = max(1, int(raw_config.get("person_top_k", normalized["person_top_k"])))
+    except (TypeError, ValueError):
+        pass
+
+    normalized["person_full_image_fallback"] = bool(raw_config.get("person_full_image_fallback", normalized["person_full_image_fallback"]))
+
+    # InsightFace-Einstellungen
+    insightface_model = raw_config.get("insightface_model", normalized["insightface_model"])
+    if isinstance(insightface_model, str):
+        normalized["insightface_model"] = insightface_model.strip() or "buffalo_l"
+
+    try:
+        normalized["insightface_ctx"] = int(raw_config.get("insightface_ctx", normalized["insightface_ctx"]))
+    except (TypeError, ValueError):
+        pass
+
+    det_size = raw_config.get("insightface_det_size", normalized["insightface_det_size"])
+    if isinstance(det_size, str):
+        normalized["insightface_det_size"] = det_size.strip() or "640,640"
+
+    # Timelapse-Einstellungen
+    timelapse_backend = raw_config.get("timelapse_ai_backend", normalized["timelapse_ai_backend"])
+    if isinstance(timelapse_backend, str):
+        normalized["timelapse_ai_backend"] = timelapse_backend.strip() or "auto"
+
+    sr_model = raw_config.get("timelapse_superres_model", normalized["timelapse_superres_model"])
+    if isinstance(sr_model, str):
+        normalized["timelapse_superres_model"] = sr_model.strip()
+
+    sr_name = raw_config.get("timelapse_superres_name", normalized["timelapse_superres_name"])
+    if isinstance(sr_name, str):
+        normalized["timelapse_superres_name"] = sr_name.strip() or "espcn"
+
+    try:
+        normalized["timelapse_superres_scale"] = max(1, int(raw_config.get("timelapse_superres_scale", normalized["timelapse_superres_scale"])))
+    except (TypeError, ValueError):
+        pass
+
+    face_onnx = raw_config.get("timelapse_face_onnx_model", normalized["timelapse_face_onnx_model"])
+    if isinstance(face_onnx, str):
+        normalized["timelapse_face_onnx_model"] = face_onnx.strip()
+
+    onnx_provider = raw_config.get("timelapse_face_onnx_provider", normalized["timelapse_face_onnx_provider"])
+    if isinstance(onnx_provider, str):
+        normalized["timelapse_face_onnx_provider"] = onnx_provider.strip() or "auto"
+
+    try:
+        normalized["timelapse_face_onnx_size"] = max(32, int(raw_config.get("timelapse_face_onnx_size", normalized["timelapse_face_onnx_size"])))
     except (TypeError, ValueError):
         pass
 
