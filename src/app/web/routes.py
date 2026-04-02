@@ -29,7 +29,8 @@ from ..albums.export import export_album_zip, parse_ratio
 from ..index.store import ensure_schema, get_admin_config, parse_search_filters, save_admin_config
 from ..persons import list_persons
 from ..persons.ranking import select_aging_timelapse_photo_paths
-from ..persons.service import enroll_person_from_paths, match_persons_for_photo, persist_matches_for_photo
+from ..persons.embeddings import cosine_similarity
+from ..persons.service import enroll_person_from_paths, extract_person_signatures, match_persons_for_photo, persist_matches_for_photo
 from ..search.query import run_search_page
 
 from .thumbnails import ensure_thumbnail
@@ -1122,6 +1123,76 @@ def api_rematch_photo_persons(token: str):
             ],
         }
     )
+
+
+@web_blueprint.get("/api/photo-details/<token>/persons/<int:person_id>/best-ref")
+def api_photo_person_best_ref(token: str, person_id: int):
+    """Gibt das Referenzfoto zurück, das den höchsten Match-Score für diese Person erzeugt hat."""
+    try:
+        path = _decode_path(token)
+    except ValueError:
+        return jsonify({"error": "invalid token"}), 400
+
+    if not path.exists() or not path.is_file():
+        return jsonify({"error": "photo not found"}), 404
+
+    db_path: Path = current_app.config["DB_PATH"]
+    if not db_path.exists():
+        return jsonify({"error": "index not found"}), 404
+
+    try:
+        import json as _json
+        from ..persons.embeddings import initialize_insightface_settings
+        from ..persons.service import initialize_person_settings
+
+        initialize_person_settings(db_path)
+        initialize_insightface_settings(db_path)
+
+        admin_config = get_admin_config(db_path)
+        preferred_backend = str(admin_config.get("person_backend") or "insightface").strip() or None
+
+        backend_name, signatures, _ = extract_person_signatures(path, preferred_backend=preferred_backend)
+        if not signatures:
+            return jsonify({"error": "no faces detected in photo"}), 404
+
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            person_row = conn.execute("SELECT name FROM persons WHERE id = ?", (person_id,)).fetchone()
+            if person_row is None:
+                return jsonify({"error": "person not found"}), 404
+
+            refs = conn.execute(
+                "SELECT source_path, vector_json FROM person_refs WHERE person_id = ? AND lower(backend) = lower(?)",
+                (person_id, backend_name),
+            ).fetchall()
+
+        if not refs:
+            return jsonify({"error": "no references for this person and backend"}), 404
+
+        best_score = -1.0
+        best_source_path: str | None = None
+        for ref in refs:
+            vector = [float(v) for v in _json.loads(ref["vector_json"])]
+            for sig, _ in signatures:
+                score = cosine_similarity(sig, vector)
+                if score > best_score:
+                    best_score = score
+                    best_source_path = ref["source_path"]
+
+        if best_source_path is None:
+            return jsonify({"error": "could not determine best reference"}), 404
+
+        source_token = _encode_path(best_source_path)
+        return jsonify(
+            {
+                "source_path": best_source_path,
+                "source_filename": Path(best_source_path).name,
+                "source_token": source_token,
+                "score": float(best_score),
+            }
+        )
+    except Exception as error:
+        return jsonify({"error": f"best-ref lookup failed: {error}"}), 500
 
 
 @web_blueprint.post("/api/albums/<int:album_id>/export-zip")

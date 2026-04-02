@@ -854,6 +854,74 @@ body {
   cursor: wait;
 }
 
+.person-ref-btn {
+  border: 1px solid #4a7ab9;
+  background: #1f2f3b;
+  color: #d7e8ff;
+  border-radius: 6px;
+  padding: 5px 8px;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.person-ref-btn:hover {
+  background: #25395a;
+}
+
+.person-ref-btn:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.person-mark-row {
+  flex-wrap: wrap;
+}
+
+.person-ref-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 6px;
+  padding: 8px;
+  background: #12192a;
+  border: 1px solid #2b3d56;
+  border-radius: 6px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.person-ref-thumb {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+  background: #1a1a2e;
+}
+
+.person-ref-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.person-ref-filename {
+  font-size: 11px;
+  color: #b9c4d1;
+  word-break: break-all;
+  margin-bottom: 4px;
+}
+
+.person-ref-score {
+  font-size: 11px;
+  color: #74d680;
+}
+
+.person-ref-info--error {
+  color: #ffd7d7;
+  font-size: 12px;
+}
+
 @media (max-width: 1200px) {
   .modal-body {
     grid-template-columns: 1fr;

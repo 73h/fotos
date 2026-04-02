@@ -1264,6 +1264,72 @@ class WebAppTests(unittest.TestCase):
                 ["Marie Curie"],
             )
 
+    def test_photo_details_best_ref_returns_source_photo(self) -> None:
+        import json as _json
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            workspace = Path(tmp_dir)
+            db_path = workspace / "data" / "photo_index.db"
+            cache_dir = workspace / "data" / "cache"
+            photos_dir = workspace / "photos"
+            photos_dir.mkdir(parents=True, exist_ok=True)
+            ensure_schema(db_path)
+
+            image_path = photos_dir / "bestref_sample.jpg"
+            Image.new("RGB", (300, 180), color=(90, 120, 160)).save(image_path)
+            stat = image_path.stat()
+            upsert_photo(
+                db_path=db_path,
+                record=ImageRecord(path=image_path, size_bytes=stat.st_size, modified_ts=stat.st_mtime),
+                labels=[],
+                person_count=1,
+            )
+
+            ref_path = photos_dir / "ref_marie.jpg"
+            Image.new("RGB", (100, 100), color=(200, 100, 50)).save(ref_path)
+
+            with sqlite3.connect(db_path) as conn:
+                conn.execute("INSERT INTO persons (name) VALUES (?)", ("Marie Curie",))
+                marie_id = int(conn.execute("SELECT id FROM persons WHERE name = ?", ("Marie Curie",)).fetchone()[0])
+                dummy_vector = [0.1] * 512
+                conn.execute(
+                    "INSERT INTO person_refs (person_id, source_path, vector_json, backend, vector_dim, created_ts)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (marie_id, str(ref_path), _json.dumps(dummy_vector), "insightface", 512, 0.0),
+                )
+
+            app = create_app(
+                app_config=AppConfig.from_workspace(workspace_root=workspace),
+                custom_db_path=str(db_path),
+                custom_cache_dir=str(cache_dir),
+            )
+            client = app.test_client()
+
+            photo_token = base64.urlsafe_b64encode(str(image_path).encode("utf-8")).decode("ascii").rstrip("=")
+            dummy_sig = [0.1] * 512
+
+            with (
+                patch("src.app.persons.service.initialize_person_settings", return_value=None),
+                patch("src.app.persons.embeddings.initialize_insightface_settings", return_value=None),
+                patch(
+                    "src.app.web.routes.extract_person_signatures",
+                    return_value=("insightface", [(dummy_sig, 0.9)], 1),
+                ),
+                patch("src.app.web.routes.cosine_similarity", return_value=0.88),
+            ):
+                response = client.get(f"/api/photo-details/{photo_token}/persons/{marie_id}/best-ref")
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.get_json()
+            assert payload is not None
+            self.assertEqual(payload["source_path"], str(ref_path))
+            self.assertEqual(payload["source_filename"], "ref_marie.jpg")
+            self.assertIn("source_token", payload)
+            self.assertAlmostEqual(float(payload["score"]), 0.88, places=6)
+
+            # Unbekannte Person → 404
+            bad_response = client.get(f"/api/photo-details/{photo_token}/persons/99999/best-ref")
+            self.assertEqual(bad_response.status_code, 404)
+
 
 if __name__ == "__main__":
     unittest.main()

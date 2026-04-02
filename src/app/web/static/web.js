@@ -1083,13 +1083,22 @@
                   <div class="person-mark-name">${escapeHtml(person.name || "Unbekannt")}</div>
                   <div class="person-mark-meta">Match: ${escapeHtml(scoreText)} | Smile: ${escapeHtml(smileText)}</div>
                 </div>
-                <button
-                  type="button"
-                  class="person-mark-remove-btn"
-                  onclick="removePersonMark('${escapeHtml(photoToken)}', ${Number(person.person_id)}, this)"
-                >
-                  Entfernen
-                </button>
+                <div style="display:flex;gap:6px;flex-shrink:0;">
+                  <button
+                    type="button"
+                    class="person-ref-btn"
+                    onclick="showPersonBestRef('${escapeHtml(photoToken)}', ${Number(person.person_id)}, this)"
+                  >
+                    🔍 Quellfoto
+                  </button>
+                  <button
+                    type="button"
+                    class="person-mark-remove-btn"
+                    onclick="removePersonMark('${escapeHtml(photoToken)}', ${Number(person.person_id)}, this)"
+                  >
+                    Entfernen
+                  </button>
+                </div>
               </div>
             `;
           }).join("")
@@ -1268,8 +1277,53 @@
     }
   }
 
+  async function showPersonBestRef(photoToken, personId, buttonEl) {
+    const row = buttonEl.closest(".person-mark-row");
+    // Toggle: bereits gezeigt → ausblenden
+    const existing = row ? row.querySelector(".person-ref-info") : null;
+    if (existing) {
+      existing.remove();
+      buttonEl.textContent = "🔍 Quellfoto";
+      return;
+    }
+
+    buttonEl.disabled = true;
+    buttonEl.textContent = "Lade...";
+
+    try {
+      const response = await fetch(`/api/photo-details/${photoToken}/persons/${personId}/best-ref`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Quellfoto konnte nicht geladen werden.");
+
+      const scoreText = Number.isFinite(Number(payload.score))
+        ? `${(Number(payload.score) * 100).toFixed(1)} %`
+        : "-";
+
+      const infoDiv = document.createElement("div");
+      infoDiv.className = "person-ref-info";
+      infoDiv.innerHTML = `
+        <img src="/thumb/${escapeHtml(payload.source_token)}"
+             class="person-ref-thumb"
+             alt="Referenzfoto"
+             onerror="this.style.display='none'" />
+        <div class="person-ref-meta">
+          <div class="person-ref-filename" title="${escapeHtml(payload.source_path)}">${escapeHtml(payload.source_filename)}</div>
+          <div class="person-ref-score">Score: ${escapeHtml(scoreText)}</div>
+        </div>
+      `;
+      if (row) row.appendChild(infoDiv);
+    } catch (err) {
+      const errDiv = document.createElement("div");
+      errDiv.className = "person-ref-info person-ref-info--error";
+      errDiv.textContent = err.message;
+      if (row) row.appendChild(errDiv);
+    } finally {
+      buttonEl.disabled = false;
+      buttonEl.textContent = "🔍 Quellfoto";
+    }
+  }
+
   function formatFileSize(bytes) {
-    if (bytes === 0) return "0 Bytes";
     const k = 1024;
     const sizes = ["Bytes", "KB", "MB", "GB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -1286,6 +1340,7 @@
   window.closePhotoModal = closePhotoModal;
   window.removePersonMark = removePersonMark;
   window.rematchPhotoPersons = rematchPhotoPersons;
+  window.showPersonBestRef = showPersonBestRef;
   window.toggleMenu = toggleMenu;
 
   document.addEventListener("DOMContentLoaded", () => {
