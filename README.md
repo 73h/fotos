@@ -4,7 +4,6 @@
 [![Flask](https://img.shields.io/badge/Flask-2.0+-green.svg)](https://flask.palletsprojects.com/)
 [![SQLite](https://img.shields.io/badge/SQLite-3-lightblue.svg)](https://www.sqlite.org/)
 [![YOLO](https://img.shields.io/badge/YOLO-v8-red.svg)](https://github.com/ultralytics/yolov8)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Intelligente Fotoverwaltungs-Anwendung mit fortgeschrittener KI-gestützter Bildanalyse, Personenerkennung und Duplikatverwaltung.
 
