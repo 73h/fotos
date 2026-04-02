@@ -125,6 +125,7 @@ python src/main.py web --host 0.0.0.0 --port 5050
 ```powershell
 $env:FOTOS_YOLO_MODEL="yolov8n.pt"
 $env:FOTOS_YOLO_CONF="0.25"
+$env:FOTOS_YOLO_DEVICE="auto"         # auto | 0 | cpu  (auto = GPU wenn verfuegbar)
 $env:FOTOS_PERSON_BACKEND="auto"      # auto | insightface | histogram
 $env:FOTOS_PERSON_THRESHOLD="0.38"
 $env:FOTOS_PERSON_TOP_K="3"

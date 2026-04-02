@@ -8,6 +8,18 @@ except Exception:
     YOLO = None
 
 
+def _resolve_yolo_device() -> str:
+    """Bestimmt das Ziel-Device fuer YOLO (cuda/cpu), konfigurierbar per FOTOS_YOLO_DEVICE."""
+    device = os.getenv("FOTOS_YOLO_DEVICE", "auto").strip().lower()
+    if device != "auto":
+        return device
+    try:
+        import torch
+        return "0" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        return "cpu"
+
+
 _FALLBACK_KEYWORDS_TO_LABELS: dict[str, str] = {
     "person": "person",
     "people": "person",
@@ -57,7 +69,7 @@ def detect_person_boxes(path: Path) -> list[tuple[int, int, int, int]]:
         return []
 
     try:
-        results = model.predict(source=str(path), conf=_YOLO_CONFIDENCE, verbose=False)
+        results = model.predict(source=str(path), conf=_YOLO_CONFIDENCE, verbose=False, device=_resolve_yolo_device())
     except Exception:
         return []
 
@@ -110,7 +122,7 @@ def _labels_from_yolo(path: Path) -> set[str]:
 
     labels: set[str] = set()
     try:
-        results = model.predict(source=str(path), conf=_YOLO_CONFIDENCE, verbose=False)
+        results = model.predict(source=str(path), conf=_YOLO_CONFIDENCE, verbose=False, device=_resolve_yolo_device())
     except Exception:
         return set()
 

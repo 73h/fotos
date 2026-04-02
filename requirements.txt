@@ -9,3 +9,6 @@ pytest
 opencv-python
 # Optional: fuer Delaunay-Morphing (deutlich bessere Uebergaenge)
 # scipy
+# Hinweis: NICHT zusaetzlich 'onnxruntime' (CPU-only) installieren,
+# da es onnxruntime-gpu verdraengt und GPU-Beschleunigung fuer InsightFace deaktiviert.
+# Korrekt ist: nur 'onnxruntime-gpu' aus requirements-face.txt verwenden.

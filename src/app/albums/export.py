@@ -8,7 +8,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 from ..index.store import ensure_schema
 
@@ -313,6 +313,7 @@ def export_album_zip(
 
             try:
                 with Image.open(photo_path) as image:
+                    image = ImageOps.exif_transpose(image)
                     rgb = image.convert("RGB")
                     cropped = _crop_image_to_ratio(
                         image=rgb,
