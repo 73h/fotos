@@ -457,6 +457,153 @@
     document.getElementById("search-form").requestSubmit();
   }
 
+  function getAgingAlbumElements() {
+    const panel = document.querySelector("[data-aging-album-panel='1']");
+    if (!panel) {
+      return null;
+    }
+    return {
+      panel,
+      personSelect: document.getElementById("aging-album-person-select"),
+      maxInput: document.getElementById("aging-album-max-input"),
+      qualitySelect: document.getElementById("aging-album-quality-select"),
+      targetSelect: document.getElementById("aging-album-target-select"),
+      strictGpuInput: document.getElementById("aging-album-strict-gpu"),
+      autoTimelapseInput: document.getElementById("aging-album-auto-timelapse"),
+      startBtn: document.getElementById("aging-album-start-btn"),
+      statusBox: document.getElementById("aging-album-status"),
+      openLink: document.getElementById("aging-album-open-link"),
+      timelapseLink: document.getElementById("aging-album-timelapse-link"),
+    };
+  }
+
+  function mapAgingQualityToBias(value) {
+    const normalized = String(value || "balanced").toLowerCase();
+    if (normalized === "diverse") {
+      return 0.0;
+    }
+    if (normalized === "quality") {
+      return 1.0;
+    }
+    return 0.5;
+  }
+
+  function setAgingAlbumStatus(text, isError = false) {
+    const ui = getAgingAlbumElements();
+    if (!ui || !ui.statusBox) {
+      return;
+    }
+    ui.statusBox.textContent = text;
+    ui.statusBox.style.color = isError ? "#ff7a7a" : "";
+  }
+
+  async function pollAgingAlbumStatus(statusUrl, albumUrl, timelapseStatusUrl) {
+    const maxRounds = 300;
+    for (let i = 0; i < maxRounds; i++) {
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      const response = await fetch(statusUrl);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || "Job-Status konnte nicht geladen werden.");
+      }
+
+      const percentage = Number(payload.percentage || 0);
+      const progress = percentage > 0 ? ` [${Math.round(percentage)}%]` : "";
+      const message = String(payload.message || "").trim();
+      setAgingAlbumStatus((message || "Album-Erstellung laeuft...") + progress);
+
+      if (payload.status === "completed") {
+        const ui = getAgingAlbumElements();
+        if (ui && ui.openLink && albumUrl) {
+          ui.openLink.href = String(albumUrl);
+          ui.openLink.style.display = "inline-block";
+        }
+        if (ui && ui.timelapseLink && timelapseStatusUrl) {
+          ui.timelapseLink.href = String(timelapseStatusUrl);
+          ui.timelapseLink.style.display = "inline-block";
+        }
+        setAgingAlbumStatus(message || "Aging-Album ist fertig.");
+        await refreshAlbumSidebar();
+        return;
+      }
+
+      if (payload.status === "failed" || payload.status === "error") {
+        throw new Error(payload.error || payload.message || "Aging-Album fehlgeschlagen.");
+      }
+    }
+    throw new Error("Timeout: Aging-Album dauert laenger als erwartet.");
+  }
+
+  async function startAgingAlbumBuild() {
+    const ui = getAgingAlbumElements();
+    if (!ui || !ui.personSelect) {
+      return;
+    }
+
+    const personId = Number(ui.personSelect.value || 0);
+    if (!personId) {
+      setAgingAlbumStatus("Bitte zuerst eine Person waehlen.", true);
+      return;
+    }
+
+    const payload = {
+      max_photos: Number(ui.maxInput ? ui.maxInput.value : 60) || 60,
+      quality_bias: mapAgingQualityToBias(ui.qualitySelect ? ui.qualitySelect.value : "balanced"),
+      strict_gpu: Boolean(ui.strictGpuInput && ui.strictGpuInput.checked),
+      auto_start_timelapse: Boolean(ui.autoTimelapseInput && ui.autoTimelapseInput.checked),
+    };
+    const targetAlbumId = Number(ui.targetSelect ? ui.targetSelect.value : 0);
+    if (targetAlbumId > 0) {
+      payload.target_album_id = targetAlbumId;
+    }
+
+    if (ui.startBtn) {
+      ui.startBtn.disabled = true;
+      ui.startBtn.textContent = "Erzeuge...";
+    }
+    if (ui.openLink) {
+      ui.openLink.style.display = "none";
+      ui.openLink.removeAttribute("href");
+    }
+    if (ui.timelapseLink) {
+      ui.timelapseLink.style.display = "none";
+      ui.timelapseLink.removeAttribute("href");
+    }
+    setAgingAlbumStatus("Starte Aging-Album-Erstellung...");
+
+    try {
+      const response = await fetch(`/api/persons/${personId}/build-aging-album`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "HX-Request": "true",
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || "Aging-Album konnte nicht gestartet werden.");
+      }
+
+      if (!data.status_url) {
+        throw new Error("Status-URL fehlt in der Serverantwort.");
+      }
+
+      await pollAgingAlbumStatus(
+        String(data.status_url),
+        String(data.album_url || ""),
+        String(data.timelapse_status_url || "")
+      );
+    } catch (error) {
+      setAgingAlbumStatus(`Fehler: ${error}`, true);
+    } finally {
+      if (ui.startBtn) {
+        ui.startBtn.disabled = false;
+        ui.startBtn.textContent = "Album erzeugen";
+      }
+    }
+  }
+
   function getTimelapseElements() {
     const panel = document.querySelector("[data-timelapse-panel='1']");
     if (!panel) {
@@ -796,6 +943,7 @@
   window.removePhotoFromAlbum = removePhotoFromAlbum;
   window.filterByPerson = filterByPerson;
   window.updateDateFilter = updateDateFilter;
+  window.startAgingAlbumBuild = startAgingAlbumBuild;
   window.startAlbumTimelapse = startAlbumTimelapse;
   window.startAlbumZipExport = startAlbumZipExport;
 

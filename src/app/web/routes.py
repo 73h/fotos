@@ -4,9 +4,10 @@ import json
 import math
 import os
 import re
-import threading
+import sqlite3
 import uuid
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote_plus
 from urllib.request import Request, urlopen
 
@@ -27,6 +28,7 @@ from ..albums.store import (
 from ..albums.export import export_album_zip, parse_ratio
 from ..index.store import ensure_schema, get_admin_config, parse_search_filters, save_admin_config
 from ..persons import list_persons
+from ..persons.ranking import select_aging_timelapse_photo_paths
 from ..persons.service import enroll_person_from_paths
 from ..search.query import run_search_page
 
@@ -252,6 +254,14 @@ def _build_album_payload(
         ],
         "timelapse_ai": _build_timelapse_ai_context(),
     }
+
+
+def _person_name_by_id(db_path: Path, person_id: int) -> str | None:
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute("SELECT name FROM persons WHERE id = ?", (person_id,)).fetchone()
+    if row is None:
+        return None
+    return str(row[0])
 
 
 def _build_page_payload(
@@ -527,6 +537,7 @@ def train_reference_album_route(album_id: int):
     person_name = parse_reference_album_name(album.name)
     if person_name is None:
         return jsonify({"error": "Nur Alben mit Präfix 'Ref:' können als Personenreferenz angelernt werden."}), 400
+    person_name_str: str = str(person_name)
 
     try:
         photo_paths = list_album_photo_paths(db_path=db_path, album_id=album_id)
@@ -559,12 +570,12 @@ def train_reference_album_route(album_id: int):
             progress_job.job_id,
             2,
             progress_job.total,
-            f"Lerne Person '{person_name}' mit InsightFace an ({len(photo_paths)} Bilder)...",
+            f"Lerne Person '{person_name_str}' mit InsightFace an ({len(photo_paths)} Bilder)...",
         )
 
         result = enroll_person_from_paths(
             db_path=db_path,
-            person_name=person_name,
+            person_name=person_name_str,
             image_paths=photo_paths,
             preferred_backend="insightface",
             strict_backend=True,
@@ -589,10 +600,139 @@ def train_reference_album_route(album_id: int):
         {
             "ok": True,
             "album_id": album_id,
-            "person_name": person_name,
+            "person_name": person_name_str,
             "job_id": job.job_id,
             "status": "started",
             "status_url": f"/api/admin/job/{job.job_id}",
+        }
+    ), 202
+
+
+@web_blueprint.post("/api/persons/<int:person_id>/build-aging-album")
+def api_build_aging_album_for_person(person_id: int):
+    from ..persons.embeddings import initialize_insightface_settings
+    from .admin_jobs import get_job_manager
+
+    db_path: Path = current_app.config["DB_PATH"]
+    cache_dir: Path = current_app.config["CACHE_DIR"]
+    if not db_path.exists():
+        return jsonify({"error": "Index nicht gefunden"}), 404
+
+    person_name = _person_name_by_id(db_path, person_id)
+    if not person_name:
+        return jsonify({"error": "Person nicht gefunden"}), 404
+    person_name_str: str = str(person_name)
+
+    body = request.get_json(silent=True) or {}
+    max_photos = int(body.get("max_photos", 60))
+    strict_gpu = bool(body.get("strict_gpu", False))
+    quality_bias_raw = body.get("quality_bias", 0.5)
+    auto_start_timelapse = bool(body.get("auto_start_timelapse", False))
+
+    try:
+        quality_bias = float(quality_bias_raw)
+    except (TypeError, ValueError):
+        quality_bias = 0.5
+    quality_bias = max(0.0, min(1.0, quality_bias))
+
+    target_album_id_raw = body.get("target_album_id")
+    target_album_id: int | None = None
+    if target_album_id_raw not in (None, ""):
+        try:
+            target_album_id = int(str(target_album_id_raw))
+        except (TypeError, ValueError):
+            return jsonify({"error": "target_album_id ist ungueltig"}), 400
+
+    safe_max_photos = max(2, min(max_photos, 300))
+    if target_album_id is not None:
+        album = get_album(db_path=db_path, album_id=target_album_id)
+        if album is None:
+            return jsonify({"error": "Zielalbum nicht gefunden"}), 404
+    else:
+        album_name = f"Aging: {person_name_str} ({uuid.uuid4().hex[:6]})"
+        album = create_album(db_path=db_path, name=album_name)
+
+    timelapse_job_id = f"timelapse_album_{album.id}_{uuid.uuid4().hex[:8]}" if auto_start_timelapse else ""
+
+    job_manager = get_job_manager()
+    job_id = f"aging_album_{person_id}_{uuid.uuid4().hex[:8]}"
+    job = job_manager.create_job(job_id, "build_aging_album", total=4)
+
+    def _run_build_aging_album(progress_job):
+        initialize_insightface_settings(db_path)
+        job_manager.update_progress(
+            progress_job.job_id,
+            1,
+            progress_job.total,
+            f"Starte Auswahl fuer '{person_name_str}' ...",
+        )
+
+        selection = select_aging_timelapse_photo_paths(
+            db_path=db_path,
+            person_name=person_name_str,
+            max_photos=safe_max_photos,
+            prefer_gpu=True,
+            strict_gpu=strict_gpu,
+            quality_bias=quality_bias,
+        )
+
+        if not selection.photo_paths:
+            raise ValueError("Keine geeigneten Bilder fuer Aging-Timelapse gefunden.")
+
+        job_manager.update_progress(
+            progress_job.job_id,
+            2,
+            progress_job.total,
+            f"{len(selection.photo_paths)} Bilder ausgewaehlt, befuelle Album ...",
+        )
+
+        added_count = 0
+        for path in selection.photo_paths:
+            added_count += add_photo_to_album(db_path=db_path, album_id=album.id, photo_path=path)
+
+        job_manager.update_progress(
+            progress_job.job_id,
+            3,
+            progress_job.total,
+            "Album gespeichert.",
+        )
+
+        timelapse_note = ""
+        if auto_start_timelapse:
+            tmeta = _start_album_timelapse_job(
+                db_path=db_path,
+                cache_dir=cache_dir,
+                album_id=album.id,
+                person_name=person_name_str,
+                body={
+                    "quality": "balanced",
+                    "interpolator": "auto",
+                    "enhance_faces": True,
+                    "ai_mode": "auto",
+                },
+                job_id=timelapse_job_id,
+            )
+            timelapse_note = f" Timelapse-Job gestartet: {tmeta['job_id']}."
+
+        backend_hint = "GPU" if selection.used_gpu else "CPU/Fallback"
+        progress_job.message = (
+            f"Aging-Album erstellt: '{album.name}' mit {added_count} Bildern "
+            f"(Kandidaten: {selection.considered_count}, Backend: {backend_hint})."
+            f"{timelapse_note}"
+        )
+
+    job_manager.run_job_async(job.job_id, _run_build_aging_album)
+
+    return jsonify(
+        {
+            "ok": True,
+            "status": "started",
+            "job_id": job.job_id,
+            "status_url": f"/api/admin/job/{job.job_id}",
+            "album_id": album.id,
+            "album_name": album.name,
+            "album_url": f"/?album_id={album.id}",
+            "timelapse_status_url": f"/api/admin/job/{timelapse_job_id}" if timelapse_job_id else None,
         }
     ), 202
 
@@ -928,34 +1068,22 @@ def api_album_export_download(token: str):
 # Timelapse-Endpunkte
 # ---------------------------------------------------------------------------
 
-@web_blueprint.post("/api/albums/<int:album_id>/timelapse")
-def api_album_timelapse(album_id: int):
-    """
-    Startet die Timelapse-Generierung im Hintergrund über JobManager.
 
-    JSON-Body (alle optional außer person):
-      { "person": "Marie", "fps": 24, "hold": 24, "morph": 48, "size": 512 }
-
-    Antwort:
-      202 { "job_id": "...", "status_url": "..." }   – Generierung läuft
-    """
+def _start_album_timelapse_job(
+    db_path: Path,
+    cache_dir: Path,
+    album_id: int,
+    person_name: str,
+    body: dict[str, Any],
+    job_id: str | None = None,
+) -> dict[str, str]:
     from ..albums.timelapse import TimelapseConfig, generate_aging_timelapse
     from ..persons.embeddings import initialize_insightface_settings
     from .admin_jobs import get_job_manager
 
-    db_path: Path = current_app.config["DB_PATH"]
-    cache_dir: Path = current_app.config["CACHE_DIR"]
-
-    if not db_path.exists():
-        return jsonify({"error": "Index nicht gefunden"}), 404
-
-    # Lade InsightFace-Einstellungen aus der Datenbank
-    initialize_insightface_settings(db_path)
-
-    body = request.get_json(silent=True) or {}
-    person_name: str = str(body.get("person", "")).strip()
+    person_name = str(person_name).strip()
     if not person_name:
-        return jsonify({"error": "Feld 'person' fehlt"}), 400
+        raise ValueError("Feld 'person' fehlt")
 
     fps = int(body.get("fps", 24))
     hold = int(body.get("hold", 24))
@@ -970,11 +1098,12 @@ def api_album_timelapse(album_id: int):
     ai_backend = str(body.get("ai_backend", "auto")).strip().lower() or "auto"
     ai_strength = float(body.get("ai_strength", 0.5))
 
-    job_id = f"timelapse_album_{album_id}_{uuid.uuid4().hex[:8]}"
+    safe_job_id = str(job_id or f"timelapse_album_{album_id}_{uuid.uuid4().hex[:8]}")
     exports_dir = cache_dir / "exports"
     output_path = exports_dir / f"album_{album_id}_{_make_job_id(album_id, person_name)}.mp4"
 
-    # Neuen Job über JobManager starten
+    initialize_insightface_settings(db_path)
+
     cfg = TimelapseConfig(
         fps=fps,
         hold_frames=hold,
@@ -991,29 +1120,25 @@ def api_album_timelapse(album_id: int):
     )
 
     job_manager = get_job_manager()
-    job = job_manager.create_job(job_id, "timelapse", total=100)
+    job = job_manager.create_job(str(safe_job_id), "timelapse", total=100)
 
     def _run_timelapse(progress_job) -> None:
-        """Führt die Timelapse-Generierung in einem separaten Thread aus."""
-        # Lade InsightFace-Einstellungen AUCH hier (im Worker-Thread!)
         from ..persons.embeddings import initialize_insightface_settings
+
         initialize_insightface_settings(db_path)
 
         try:
-            # Setze initial Status
             job_manager.update_progress(
                 progress_job.job_id,
                 1,
                 progress_job.total,
-                f"Starte Timelapse-Generierung für Person '{person_name}'...",
+                f"Starte Timelapse-Generierung fuer Person '{person_name}'...",
             )
 
             def _cb(step: int, total: int, msg: str) -> None:
-                # Normalisiere auf 1-100
                 pct = int(max(1, min(99, step * 99 // max(1, total))))
                 job_manager.update_progress(progress_job.job_id, pct, 100, msg)
 
-            # Lösche altes Video falls vorhanden
             if output_path.exists():
                 try:
                     output_path.unlink()
@@ -1029,25 +1154,52 @@ def api_album_timelapse(album_id: int):
                 progress_cb=_cb,
             )
 
-            # Markiere als abgeschlossen
             msg = f"✓ Fertig – Timelapse mit {count} Fotos erstellt"
             job_manager.set_job_completed(progress_job.job_id, msg)
-
-            # Speichere Video-Pfad im Job für Download-Link
             progress_job.message = msg
-
         except Exception as exc:
             job_manager.set_job_failed(progress_job.job_id, str(exc))
 
-    job_manager.run_job_async(job.job_id, _run_timelapse)
+    job_manager.run_job_async(str(job.job_id), _run_timelapse)
+    return {
+        "job_id": safe_job_id,
+        "status": "started",
+        "status_url": f"/api/admin/job/{safe_job_id}",
+    }
 
-    return jsonify(
-        {
-            "job_id": job_id,
-            "status": "started",
-            "status_url": f"/api/admin/job/{job_id}",
-        }
-    ), 202
+@web_blueprint.post("/api/albums/<int:album_id>/timelapse")
+def api_album_timelapse(album_id: int):
+    """
+    Startet die Timelapse-Generierung im Hintergrund über JobManager.
+
+    JSON-Body (alle optional außer person):
+      { "person": "Marie", "fps": 24, "hold": 24, "morph": 48, "size": 512 }
+
+    Antwort:
+      202 { "job_id": "...", "status_url": "..." }   – Generierung läuft
+    """
+    db_path: Path = current_app.config["DB_PATH"]
+    cache_dir: Path = current_app.config["CACHE_DIR"]
+
+    if not db_path.exists():
+        return jsonify({"error": "Index nicht gefunden"}), 404
+
+    body = request.get_json(silent=True) or {}
+    person_name: str = str(body.get("person", "")).strip()
+    if not person_name:
+        return jsonify({"error": "Feld 'person' fehlt"}), 400
+    try:
+        payload = _start_album_timelapse_job(
+            db_path=db_path,
+            cache_dir=cache_dir,
+            album_id=album_id,
+            person_name=person_name,
+            body=body,
+        )
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+    return jsonify(payload), 202
 
 
 @web_blueprint.get("/api/albums/timelapse/status/<job_id>")

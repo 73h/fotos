@@ -74,6 +74,57 @@
   <p class="album-empty">Noch keine Alben vorhanden.</p>
   {% endif %}
 
+  <div class="timelapse-panel" data-aging-album-panel="1">
+    <h3>Aging-Best-of Album</h3>
+    <p>Waehlt automatisch die besten Bilder einer Person fuer Aging-Timelapse aus.</p>
+
+    <div class="timelapse-form-row">
+      <select id="aging-album-person-select">
+        <option value="">Person waehlen</option>
+        {% for person in persons|default([]) %}
+        <option value="{{ person.id }}">{{ person.name }} ({{ person.photo_count }})</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="timelapse-form-grid">
+      <label>Max Bilder <input type="number" id="aging-album-max-input" value="60" min="2" max="300" /></label>
+      <label>
+        Qualitaet
+        <select id="aging-album-quality-select">
+          <option value="diverse">mehr Vielfalt</option>
+          <option value="balanced" selected>ausgewogen</option>
+          <option value="quality">max Qualitaet</option>
+        </select>
+      </label>
+      <label>
+        Zielalbum
+        <select id="aging-album-target-select">
+          <option value="">Neues Album erstellen</option>
+          {% for album in albums %}
+          <option value="{{ album.id }}">{{ album.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+
+    <div class="timelapse-form-row">
+      <label><input type="checkbox" id="aging-album-strict-gpu" /> GPU strikt (kein CPU-Fallback)</label>
+    </div>
+
+    <div class="timelapse-form-row">
+      <label><input type="checkbox" id="aging-album-auto-timelapse" /> Nach Fertigstellung Timelapse starten</label>
+    </div>
+
+    <div class="timelapse-actions">
+      <button type="button" id="aging-album-start-btn" onclick="startAgingAlbumBuild()">Album erzeugen</button>
+      <a id="aging-album-open-link" class="timelapse-download-link" href="#" style="display:none;">Album oeffnen</a>
+      <a id="aging-album-timelapse-link" class="timelapse-download-link" href="#" style="display:none;">Timelapse-Job</a>
+    </div>
+
+    <div id="aging-album-status" class="timelapse-status">Bereit.</div>
+  </div>
+
   {% if active_album_id %}
   <div class="timelapse-panel" data-timelapse-panel="1" data-album-id="{{ active_album_id }}">
     <h3>Aging-Timelapse</h3>

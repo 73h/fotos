@@ -45,6 +45,10 @@ Lokale Foto-Suchmaschine mit YOLO-Objekterkennung, InsightFace-Gesichtserkennung
 - **Admin-Dashboard** mit Tabs für KI-Einstellungen
 - **Live-Suche** mit Datum-, Personen- und Smile-Filtern
 - **Album-Management** mit Duplikat-Erkennung
+- **Aging-Best-of Album Builder** pro Person (GPU-first mit optional strikt ohne CPU-Fallback)
+- Qualitätsregler fuer Aging-Auswahl (mehr Vielfalt bis max Qualitaet)
+- Optional direkt in bestehendes Album schreiben
+- Optional nach Album-Build automatisch Timelapse-Job starten
 - **Job-Verwaltung** für Batch-Operationen
 
 ### ⚙️ Konfiguration

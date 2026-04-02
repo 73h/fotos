@@ -18,9 +18,9 @@ from src.app.config import AppConfig  # noqa: E402
 from src.app.index.store import ensure_schema, upsert_photo  # noqa: E402
 from src.app.ingest import ExifData, ImageRecord  # noqa: E402
 from src.app.persons.service import EnrollResult  # noqa: E402
+from src.app.persons.ranking import AgingSelectionResult  # noqa: E402
 from src.app.web import create_app  # noqa: E402
 from src.app.web.admin_jobs import JobManager  # noqa: E402
-from src.app.web import routes as web_routes  # noqa: E402
 
 
 class WebAppTests(unittest.TestCase):
@@ -379,6 +379,136 @@ class WebAppTests(unittest.TestCase):
             non_ref_response = client.post(f"/albums/{non_ref_album_id}/train-reference")
             self.assertEqual(non_ref_response.status_code, 400)
 
+    def test_person_aging_album_can_be_built_via_web_job(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            workspace = Path(tmp_dir)
+            db_path = workspace / "data" / "photo_index.db"
+            cache_dir = workspace / "data" / "cache"
+            photos_dir = workspace / "photos"
+            photos_dir.mkdir(parents=True, exist_ok=True)
+            ensure_schema(db_path)
+
+            image_path = photos_dir / "aging_source.jpg"
+            Image.new("RGB", (220, 140), color=(110, 120, 180)).save(image_path)
+            stat = image_path.stat()
+            upsert_photo(
+                db_path=db_path,
+                record=ImageRecord(path=image_path, size_bytes=stat.st_size, modified_ts=stat.st_mtime),
+                labels=["portrait"],
+                person_count=1,
+            )
+
+            with sqlite3.connect(db_path) as conn:
+                conn.execute("INSERT INTO persons (name) VALUES (?)", ("Marie Curie",))
+                person_id = int(conn.execute("SELECT id FROM persons WHERE name = ?", ("Marie Curie",)).fetchone()[0])
+                conn.execute(
+                    """
+                    INSERT INTO photo_person_matches (photo_path, person_id, score, smile_score, matched_ts)
+                    VALUES (?, ?, ?, ?, strftime('%s','now'))
+                    """,
+                    (str(image_path), person_id, 0.93, 0.6),
+                )
+
+            app = create_app(
+                app_config=AppConfig.from_workspace(workspace_root=workspace),
+                custom_db_path=str(db_path),
+                custom_cache_dir=str(cache_dir),
+            )
+            client = app.test_client()
+
+            sidebar_response = client.get("/albums/sidebar")
+            self.assertEqual(sidebar_response.status_code, 200)
+            sidebar_html = sidebar_response.get_data(as_text=True)
+            self.assertIn("Aging-Best-of Album", sidebar_html)
+            self.assertIn("aging-album-start-btn", sidebar_html)
+            self.assertIn("aging-album-quality-select", sidebar_html)
+            self.assertIn("aging-album-target-select", sidebar_html)
+            self.assertIn("aging-album-auto-timelapse", sidebar_html)
+
+            create_target_album_response = client.post(
+                "/albums",
+                data={"name": "Bestehendes Aging", "q": "", "per_page": 24},
+            )
+            self.assertEqual(create_target_album_response.status_code, 200)
+
+            with sqlite3.connect(db_path) as conn:
+                target_album_row = conn.execute("SELECT id FROM albums WHERE name = ?", ("Bestehendes Aging",)).fetchone()
+            self.assertIsNotNone(target_album_row)
+            target_album_id = int(target_album_row[0])
+
+            def _run_job_inline(self, job_id, task_func):
+                job = self.get_job(job_id)
+                if not job:
+                    return
+                self.set_job_running(job_id)
+                try:
+                    task_func(job)
+                    if job.should_abort():
+                        self.set_job_aborted(job_id)
+                    else:
+                        self.set_job_completed(job_id)
+                except Exception as exc:
+                    self.set_job_failed(job_id, str(exc))
+
+            with patch(
+                "src.app.web.routes.select_aging_timelapse_photo_paths",
+                return_value=AgingSelectionResult(
+                    photo_paths=[str(image_path)],
+                    considered_count=1,
+                    used_gpu=True,
+                ),
+            ) as mocked_select, patch(
+                "src.app.web.routes._start_album_timelapse_job",
+                return_value={"job_id": "timelapse_test_1", "status": "started", "status_url": "/api/admin/job/timelapse_test_1"},
+            ) as mocked_timelapse_start, patch.object(JobManager, "run_job_async", _run_job_inline):
+                response = client.post(
+                    f"/api/persons/{person_id}/build-aging-album",
+                    json={
+                        "max_photos": 12,
+                        "strict_gpu": True,
+                        "quality_bias": 1.0,
+                        "target_album_id": target_album_id,
+                        "auto_start_timelapse": True,
+                    },
+                )
+
+            self.assertEqual(response.status_code, 202)
+            payload = response.get_json()
+            assert payload is not None
+            self.assertTrue(payload["ok"])
+            self.assertIn("album_id", payload)
+            self.assertIn("status_url", payload)
+            self.assertEqual(int(payload["album_id"]), target_album_id)
+            self.assertTrue(str(payload.get("timelapse_status_url") or "").startswith("/api/admin/job/timelapse_album_"))
+
+            mocked_select.assert_called_once()
+            call_kwargs = mocked_select.call_args.kwargs
+            self.assertEqual(call_kwargs["person_name"], "Marie Curie")
+            self.assertEqual(call_kwargs["max_photos"], 12)
+            self.assertTrue(call_kwargs["strict_gpu"])
+            self.assertEqual(float(call_kwargs["quality_bias"]), 1.0)
+
+            mocked_timelapse_start.assert_called_once()
+            self.assertEqual(int(mocked_timelapse_start.call_args.kwargs["album_id"]), target_album_id)
+            self.assertEqual(str(mocked_timelapse_start.call_args.kwargs["person_name"]), "Marie Curie")
+            self.assertTrue(str(mocked_timelapse_start.call_args.kwargs["job_id"]).startswith("timelapse_album_"))
+
+            with sqlite3.connect(db_path) as conn:
+                count_row = conn.execute(
+                    "SELECT COUNT(*) FROM album_photos WHERE album_id = ?",
+                    (int(payload["album_id"]),),
+                ).fetchone()
+            self.assertIsNotNone(count_row)
+            self.assertEqual(int(count_row[0]), 1)
+
+            with sqlite3.connect(db_path) as conn:
+                album_count_row = conn.execute("SELECT COUNT(*) FROM albums").fetchone()
+            self.assertIsNotNone(album_count_row)
+            self.assertEqual(int(album_count_row[0]), 1)
+
+            missing_person_response = client.post("/api/persons/999999/build-aging-album", json={})
+            self.assertEqual(missing_person_response.status_code, 404)
+
     def test_map_api_and_geocoding_routes(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             workspace = Path(tmp_dir)
@@ -725,18 +855,23 @@ class WebAppTests(unittest.TestCase):
             )
             self.assertEqual(bad_response.status_code, 400)
 
-            job_id = f"album_{album_id}_marie_curie"
-            export_path = cache_dir / "exports" / f"{job_id}.mp4"
+            export_path = cache_dir / "exports" / f"album_{album_id}_album_{album_id}_marie_curie.mp4"
             export_path.parent.mkdir(parents=True, exist_ok=True)
             export_path.write_bytes(b"fake-mp4")
 
-            class _ImmediateThread:
-                def __init__(self, target, daemon=True):
-                    self._target = target
-                    self.daemon = daemon
-
-                def start(self):
-                    self._target()
+            def _run_job_inline(self, job_id, task_func):
+                job = self.get_job(job_id)
+                if not job:
+                    return
+                self.set_job_running(job_id)
+                try:
+                    task_func(job)
+                    if job.should_abort():
+                        self.set_job_aborted(job_id)
+                    else:
+                        self.set_job_completed(job_id)
+                except Exception as exc:
+                    self.set_job_failed(job_id, str(exc))
 
             def _fake_generate(db_path, album_id, person_name, output_path, config, progress_cb):
                 self.assertFalse(output_path.exists(), "Alte MP4 sollte vor dem Rebuild gelöscht werden.")
@@ -754,11 +889,8 @@ class WebAppTests(unittest.TestCase):
                     progress_cb(1, 1, "fertig")
                 return 3
 
-            with web_routes._timelapse_lock:
-                web_routes._timelapse_jobs.clear()
-
-            with patch("src.app.albums.timelapse.generate_aging_timelapse", side_effect=_fake_generate), patch(
-                "src.app.web.routes.threading.Thread", _ImmediateThread
+            with patch("src.app.albums.timelapse.generate_aging_timelapse", side_effect=_fake_generate), patch.object(
+                JobManager, "run_job_async", _run_job_inline
             ):
                 start_response = client.post(
                     f"/api/albums/{album_id}/timelapse",
@@ -782,17 +914,18 @@ class WebAppTests(unittest.TestCase):
             self.assertEqual(start_response.status_code, 202)
             start_payload = start_response.get_json()
             assert start_payload is not None
-            self.assertEqual(start_payload["status"], "running")
-            self.assertIn(f"/api/albums/timelapse/status/{job_id}", start_payload["status_url"])
+            self.assertEqual(start_payload["status"], "started")
+            self.assertIn("/api/admin/job/", start_payload["status_url"])
 
-            status_response = client.get(f"/api/albums/timelapse/status/{job_id}")
+            status_response = client.get(str(start_payload["status_url"]))
             self.assertEqual(status_response.status_code, 200)
             status_payload = status_response.get_json()
             assert status_payload is not None
-            self.assertEqual(status_payload["status"], "done")
-            self.assertIn(f"/api/albums/timelapse/download/{job_id}", status_payload["download_url"])
+            self.assertEqual(status_payload["status"], "completed")
 
-            download_response = client.get(f"/api/albums/timelapse/download/{job_id}")
+            download_token = base64.urlsafe_b64encode(str(export_path).encode("utf-8")).decode("ascii").rstrip("=")
+            download_response = client.get(f"/api/albums/timelapse/download/{download_token}")
+
             self.assertEqual(download_response.status_code, 200)
             self.assertEqual(download_response.mimetype, "video/mp4")
             self.assertEqual(download_response.data, b"new-mp4")
