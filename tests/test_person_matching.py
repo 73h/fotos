@@ -135,6 +135,60 @@ class PersonMatchingTests(unittest.TestCase):
 
         self.assertEqual(set(pending), set(photo_paths))
 
+    def test_replace_person_references_preserves_existing_matches(self) -> None:
+        """Prüfe, dass beim Anlernen einer Person die bestehenden Matches erhalten bleiben."""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            db_path = Path(tmp_dir) / "photo_index.db"
+            ensure_schema(db_path)
+
+            marie_id = store.upsert_person(db_path, "Marie")
+
+            # Füge initiale Matches hinzu
+            store.replace_photo_person_matches(
+                db_path=db_path,
+                photo_path="photo_1.jpg",
+                matches=[(marie_id, 0.92, 0.76)],
+            )
+            store.replace_photo_person_matches(
+                db_path=db_path,
+                photo_path="photo_2.jpg",
+                matches=[(marie_id, 0.88, 0.45)],
+            )
+
+            with sqlite3.connect(db_path) as conn:
+                before_count = conn.execute(
+                    "SELECT COUNT(*) FROM photo_person_matches WHERE person_id = ?",
+                    (marie_id,),
+                ).fetchone()[0]
+
+            # Neue References für Person einfügen (simuliert: Person neu anlernen)
+            store.replace_person_references(
+                db_path=db_path,
+                person_id=marie_id,
+                source_vectors=[
+                    ("ref_1.jpg", [0.1] * 512),
+                    ("ref_2.jpg", [0.2] * 512),
+                ],
+                backend="test_backend",
+                vector_dim=512,
+            )
+
+            with sqlite3.connect(db_path) as conn:
+                after_count = conn.execute(
+                    "SELECT COUNT(*) FROM photo_person_matches WHERE person_id = ?",
+                    (marie_id,),
+                ).fetchone()[0]
+                # Person-Version wurde inkrementiert
+                version = conn.execute(
+                    "SELECT version FROM persons WHERE id = ?",
+                    (marie_id,),
+                ).fetchone()[0]
+
+        # Wichtig: Matches sollten NICHT gelöscht werden beim Anlernen
+        self.assertEqual(before_count, 2)
+        self.assertEqual(after_count, 2)  # Noch vorhanden!
+        self.assertGreaterEqual(int(version), 2)  # Version wurde erhöht
+
 
 if __name__ == "__main__":
     unittest.main()

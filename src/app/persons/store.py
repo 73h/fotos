@@ -79,11 +79,8 @@ def replace_person_references(
                 for source_path, vector in source_vectors
             ],
         )
-        # Lösche alte Match-Einträge für diese Person, um erzwungenes Rematch zu triggern
-        conn.execute(
-            "DELETE FROM photo_person_matches WHERE person_id = ?",
-            (person_id,)
-        )
+        # Alte Matches werden NICHT gelöscht - sie bleiben bis zu einem expliziten Rematch
+        # sichtbar. Die Versionserhöhung oben triggert den Rematch-Prozess, wenn nötig.
 
 
 def list_person_references(
