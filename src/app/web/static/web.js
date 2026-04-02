@@ -1293,7 +1293,10 @@
     try {
       const response = await fetch(`/api/photo-details/${photoToken}/persons/${personId}/best-ref`);
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || "Quellfoto konnte nicht geladen werden.");
+      if (!response.ok) {
+        const msg = payload.error || `HTTP ${response.status}: Quellfoto konnte nicht geladen werden.`;
+        throw new Error(msg);
+      }
 
       const scoreText = Number.isFinite(Number(payload.score))
         ? `${(Number(payload.score) * 100).toFixed(1)} %`
