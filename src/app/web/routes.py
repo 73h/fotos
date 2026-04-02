@@ -516,6 +516,10 @@ def train_reference_album_route(album_id: int):
     db_path: Path = current_app.config["DB_PATH"]
     ensure_schema(db_path)
 
+    # Lade InsightFace-Einstellungen aus der Datenbank
+    from ..persons.embeddings import initialize_insightface_settings
+    initialize_insightface_settings(db_path)
+
     album = get_album(db_path=db_path, album_id=album_id)
     if album is None:
         return jsonify({"error": "Album nicht gefunden."}), 404
@@ -540,6 +544,10 @@ def train_reference_album_route(album_id: int):
     job = job_manager.create_job(job_id, "train_reference_person", total=3)
 
     def _run_train_reference(progress_job):
+        # Lade InsightFace-Einstellungen AUCH hier (im Worker-Thread!)
+        from ..persons.embeddings import initialize_insightface_settings
+        initialize_insightface_settings(db_path)
+
         job_manager.update_progress(
             progress_job.job_id,
             1,
@@ -932,6 +940,7 @@ def api_album_timelapse(album_id: int):
       202 { "job_id": "...", "status_url": "..." }   – Generierung läuft
     """
     from ..albums.timelapse import TimelapseConfig, generate_aging_timelapse
+    from ..persons.embeddings import initialize_insightface_settings
     from .admin_jobs import get_job_manager
 
     db_path: Path = current_app.config["DB_PATH"]
@@ -939,6 +948,9 @@ def api_album_timelapse(album_id: int):
 
     if not db_path.exists():
         return jsonify({"error": "Index nicht gefunden"}), 404
+
+    # Lade InsightFace-Einstellungen aus der Datenbank
+    initialize_insightface_settings(db_path)
 
     body = request.get_json(silent=True) or {}
     person_name: str = str(body.get("person", "")).strip()
@@ -983,6 +995,10 @@ def api_album_timelapse(album_id: int):
 
     def _run_timelapse(progress_job) -> None:
         """Führt die Timelapse-Generierung in einem separaten Thread aus."""
+        # Lade InsightFace-Einstellungen AUCH hier (im Worker-Thread!)
+        from ..persons.embeddings import initialize_insightface_settings
+        initialize_insightface_settings(db_path)
+
         try:
             # Setze initial Status
             job_manager.update_progress(

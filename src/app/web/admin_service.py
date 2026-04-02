@@ -112,8 +112,15 @@ class AdminService:
         phash_threshold: int = 6,
     ) -> None:
         """Führt Full-Index aus."""
+        from ..detectors.labels import initialize_yolo_settings
+        from ..persons.embeddings import initialize_insightface_settings
+
         db_path = self.app_config.resolve_db_path()
         ensure_schema(db_path)
+
+        # Lade alle Einstellungen aus der Datenbank (IM WORKER-THREAD!)
+        initialize_yolo_settings(db_path)
+        initialize_insightface_settings(db_path)
 
         safe_workers = max(1, index_workers)
         safe_threshold = max(0, min(64, phash_threshold))
@@ -307,11 +314,16 @@ class AdminService:
         workers: int = 1,
     ) -> None:
         """Führt Rematch aus."""
+        from ..persons.embeddings import initialize_insightface_settings
+
         db_path = self.app_config.resolve_db_path()
         if not db_path.exists():
             raise ValueError(f"Index nicht gefunden: {db_path}")
 
         ensure_schema(db_path)
+
+        # Lade InsightFace-Einstellungen aus der Datenbank (IM WORKER-THREAD!)
+        initialize_insightface_settings(db_path)
 
         with sqlite3.connect(db_path) as conn:
             rows = conn.execute("SELECT path FROM photos ORDER BY path").fetchall()

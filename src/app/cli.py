@@ -199,8 +199,15 @@ def _index_command(
     near_duplicates: bool = False,
     phash_threshold: int = 6,
 ) -> int:
+    from .persons.embeddings import initialize_insightface_settings
+    from .detectors.labels import initialize_yolo_settings
+
     db_path = config.resolve_db_path(custom_db_path)
     ensure_schema(db_path)
+
+    # Lade alle Einstellungen aus der Datenbank
+    initialize_yolo_settings(db_path)
+    initialize_insightface_settings(db_path)
 
     safe_workers = max(1, index_workers)
     safe_threshold = max(0, min(64, phash_threshold))
@@ -345,8 +352,13 @@ def _enroll_command(
     custom_db_path: str | None,
     person_backend: str | None,
 ) -> int:
+    from .persons.embeddings import initialize_insightface_settings
+
     db_path = config.resolve_db_path(custom_db_path)
     ensure_schema(db_path)
+
+    # Lade InsightFace-Einstellungen aus der Datenbank
+    initialize_insightface_settings(db_path)
 
     try:
         result = enroll_person(
@@ -453,11 +465,15 @@ def _album_timelapse_command(
     ai_strength: float,
 ) -> int:
     from .albums.timelapse import TimelapseConfig, generate_aging_timelapse
+    from .persons.embeddings import initialize_insightface_settings
 
     db_path = config.resolve_db_path(custom_db_path)
     if not db_path.exists():
         print(f"Index nicht gefunden: {db_path}")
         return 1
+
+    # Lade InsightFace-Einstellungen aus der Datenbank
+    initialize_insightface_settings(db_path)
 
     if person_backend:
         import os
@@ -518,6 +534,7 @@ def _rematch_persons_command(
     Viel schneller als ein vollstaendiger Re-Index, da SHA1/pHash/Labels/EXIF uebersprungen werden.
     """
     import sqlite3
+    from .persons.embeddings import initialize_insightface_settings
 
     db_path = config.resolve_db_path(custom_db_path)
     if not db_path.exists():
@@ -525,6 +542,9 @@ def _rematch_persons_command(
         return 1
 
     ensure_schema(db_path)
+
+    # Lade InsightFace-Einstellungen aus der Datenbank, damit GPU-Device korrekt gesetzt ist
+    initialize_insightface_settings(db_path)
 
     with sqlite3.connect(db_path) as conn:
         rows = conn.execute("SELECT path FROM photos ORDER BY path").fetchall()
