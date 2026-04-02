@@ -120,6 +120,21 @@ class PersonMatchingTests(unittest.TestCase):
         self.assertAlmostEqual(float(rows[0][1]), 0.96, places=6)
         self.assertAlmostEqual(float(rows[0][2]), 0.88, places=6)
 
+    def test_get_photos_needing_rematch_accepts_multiple_photo_paths(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            db_path = Path(tmp_dir) / "photo_index.db"
+            ensure_schema(db_path)
+
+            photo_paths = [
+                "photo_a.jpg",
+                "photo_b.jpg",
+                "photo_c.jpg",
+            ]
+
+            pending = store.get_photos_needing_rematch(db_path, photo_paths)
+
+        self.assertEqual(set(pending), set(photo_paths))
+
 
 if __name__ == "__main__":
     unittest.main()

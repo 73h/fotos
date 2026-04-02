@@ -226,23 +226,6 @@ def get_photos_needing_rematch(
     if not photo_paths:
         return []
 
-    with sqlite3.connect(db_path) as conn:
-        # Hole alle Fotos, deren Person-Version veraltet ist oder nicht existiert
-        placeholders = ",".join(["?" for _ in photo_paths])
-        rows = conn.execute(
-            f"""
-            SELECT DISTINCT ph.path
-            FROM (
-                SELECT ? as path
-                UNION ALL
-                SELECT ? as path
-            ) ph
-            LEFT JOIN photo_person_matches m ON m.photo_path = ph.path
-            WHERE m.photo_path IS NULL
-               OR (SELECT version FROM persons WHERE id = m.person_id) > m.person_version
-            """,
-            photo_paths + photo_paths,
-        ).fetchall()
 
     # Vereinfachte Version - alle Photos zurückgeben, die noch nicht gecacht sind
     # oder deren Person-Version älter ist
