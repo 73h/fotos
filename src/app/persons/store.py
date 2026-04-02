@@ -129,6 +129,11 @@ def replace_photo_person_matches(
 ) -> None:
     now_ts = time.time()
     with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "DELETE FROM photo_person_matches WHERE photo_path = ?",
+            (photo_path,),
+        )
+
         # Hole die aktuelle Version der Person(en) um die Versionen zu speichern
         for person_id, score, smile_score in matches:
             version_row = conn.execute(

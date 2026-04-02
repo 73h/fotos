@@ -958,19 +958,14 @@
     // Set image URL
     photoImg.src = `/photo/${photoToken}`;
     modal.dataset.photoToken = photoToken;
+    delete modal.dataset.detailNoticeMessage;
+    delete modal.dataset.detailNoticeType;
 
     // Load details
     detailsDiv.innerHTML = '<div class="details-loading">Lade Details...</div>';
 
     try {
-      const response = await fetch(`/api/photo-details/${photoToken}`);
-      if (!response.ok) {
-        detailsDiv.innerHTML = '<div class="details-loading">Fehler beim Laden der Details.</div>';
-        return;
-      }
-
-      const data = await response.json();
-      detailsDiv.innerHTML = buildDetailsHTML(data, photoToken);
+      await refreshPhotoDetails(photoToken);
     } catch (error) {
       console.error("Error loading photo details:", error);
       detailsDiv.innerHTML = '<div class="details-loading">Fehler beim Laden der Details.</div>';
@@ -990,12 +985,55 @@
     if (modal) {
       modal.classList.remove("active");
       delete modal.dataset.photoToken;
+      delete modal.dataset.detailNoticeMessage;
+      delete modal.dataset.detailNoticeType;
       document.body.style.overflow = "";
     }
   }
 
-  function buildDetailsHTML(data, photoToken) {
+  function getPhotoModalNotice() {
+    const modal = document.getElementById("photo-modal");
+    if (!modal) {
+      return null;
+    }
+
+    const message = String(modal.dataset.detailNoticeMessage || "").trim();
+    if (!message) {
+      return null;
+    }
+
+    return {
+      message,
+      type: String(modal.dataset.detailNoticeType || "success").trim() || "success",
+    };
+  }
+
+  function setPhotoModalNotice(message, type = "success") {
+    const modal = document.getElementById("photo-modal");
+    if (!modal) {
+      return;
+    }
+    modal.dataset.detailNoticeMessage = String(message || "").trim();
+    modal.dataset.detailNoticeType = String(type || "success").trim() || "success";
+  }
+
+  function buildDetailsFeedbackHTML(notice) {
+    if (!notice || !notice.message) {
+      return "";
+    }
+    return `
+      <div class="detail-feedback detail-feedback--${escapeHtml(notice.type || "success")}" role="status" aria-live="polite">
+        ${escapeHtml(notice.message)}
+      </div>
+    `;
+  }
+
+  function buildDetailsHTML(data, photoToken, notice = null) {
     const sections = [];
+
+    if (notice && notice.message) {
+      sections.push(buildDetailsFeedbackHTML(notice));
+    }
 
     // File Info Section
     if (data.file_info) {
@@ -1057,6 +1095,16 @@
           }).join("")
         : '<div class="detail-muted">Keine Personenmarkierungen gefunden.</div>';
 
+      const rematchButton = `
+        <button
+          type="button"
+          class="person-mark-remove-btn"
+          onclick="rematchPhotoPersons('${escapeHtml(photoToken)}', this)"
+        >
+          Personen-Rematch starten
+        </button>
+      `;
+
       sections.push(`
         <div class="detail-section">
           <div class="detail-section-title">Erkannte Elemente</div>
@@ -1072,6 +1120,10 @@
             <div class="detail-label">Personen</div>
             <div class="detail-value">${personRows}</div>
           </div>
+          <div class="detail-row detail-row-stack">
+            <div class="detail-label">Aktionen</div>
+            <div class="detail-value">${rematchButton}</div>
+          </div>
         </div>
       `);
     }
@@ -1085,6 +1137,21 @@
     }
 
     return sections.join('');
+  }
+
+  async function refreshPhotoDetails(photoToken) {
+    const detailsDiv = document.getElementById("modal-details");
+    if (!detailsDiv) {
+      return;
+    }
+
+    const response = await fetch(`/api/photo-details/${photoToken}`);
+    if (!response.ok) {
+      throw new Error("Fehler beim Laden der Details.");
+    }
+
+    const data = await response.json();
+    detailsDiv.innerHTML = buildDetailsHTML(data, photoToken, getPhotoModalNotice());
   }
 
   function buildSection(title, rows) {
@@ -1152,12 +1219,7 @@
         throw new Error(payload.error || "Entfernen fehlgeschlagen.");
       }
 
-      const refreshResponse = await fetch(`/api/photo-details/${photoToken}`);
-      if (!refreshResponse.ok) {
-        throw new Error("Details konnten nach dem Entfernen nicht neu geladen werden.");
-      }
-      const refreshedData = await refreshResponse.json();
-      detailsDiv.innerHTML = buildDetailsHTML(refreshedData, photoToken);
+      await refreshPhotoDetails(photoToken);
 
       if (modal && modal.dataset && modal.dataset.photoToken === photoToken && typeof window.location !== "undefined") {
         // Keine harte Seitenaktualisierung: Nur Ergebnisgrid auf Wunsch mit normaler Suche neu laden.
@@ -1167,6 +1229,41 @@
       if (buttonEl) {
         buttonEl.disabled = false;
         buttonEl.textContent = "Entfernen";
+      }
+    }
+  }
+
+  async function rematchPhotoPersons(photoToken, buttonEl) {
+    const detailsDiv = document.getElementById("modal-details");
+    if (!detailsDiv) return;
+
+    if (buttonEl) {
+      buttonEl.disabled = true;
+      buttonEl.textContent = "Rematch läuft...";
+    }
+
+    try {
+      const response = await fetch(`/api/photo-details/${photoToken}/persons/rematch`, {
+        method: "POST",
+        headers: { "HX-Request": "true" },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || "Personen-Rematch fehlgeschlagen.");
+      }
+
+      const matchCount = Number(payload.match_count || 0);
+      const personCount = Number(payload.person_count || 0);
+      const successMessage = matchCount > 0
+        ? `Rematch erfolgreich: ${matchCount} Treffer bei ${personCount} erkannter/n Person(en).`
+        : `Rematch abgeschlossen: keine Personen-Treffer bei ${personCount} erkannter/n Person(en).`;
+      setPhotoModalNotice(successMessage, "success");
+      await refreshPhotoDetails(photoToken);
+    } catch (error) {
+      window.alert(`Fehler: ${error}`);
+      if (buttonEl) {
+        buttonEl.disabled = false;
+        buttonEl.textContent = "Personen-Rematch starten";
       }
     }
   }
@@ -1188,6 +1285,7 @@
   window.openPhotoModal = openPhotoModal;
   window.closePhotoModal = closePhotoModal;
   window.removePersonMark = removePersonMark;
+  window.rematchPhotoPersons = rematchPhotoPersons;
   window.toggleMenu = toggleMenu;
 
   document.addEventListener("DOMContentLoaded", () => {

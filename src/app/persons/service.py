@@ -167,6 +167,40 @@ def _score_signature_against_references(
     return scored[:_PERSON_TOP_K]
 
 
+def _select_best_unique_matches(candidates_by_signature: list[list[PersonMatch]]) -> list[PersonMatch]:
+    if not candidates_by_signature:
+        return []
+
+    flattened_candidates: list[tuple[float, int, int, PersonMatch]] = []
+
+    for signature_index, candidates in enumerate(candidates_by_signature):
+        best_for_signature: dict[int, PersonMatch] = {}
+        for match in candidates:
+            current = best_for_signature.get(match.person_id)
+            if current is None or match.score > current.score:
+                best_for_signature[match.person_id] = match
+        for match in best_for_signature.values():
+            flattened_candidates.append((match.score, signature_index, match.person_id, match))
+
+    selected: list[PersonMatch] = []
+    used_signatures: set[int] = set()
+    used_person_ids: set[int] = set()
+
+    for _score, signature_index, person_id, match in sorted(
+        flattened_candidates,
+        key=lambda item: (-item[0], item[1], item[2]),
+    ):
+        if signature_index in used_signatures or person_id in used_person_ids:
+            continue
+        used_signatures.add(signature_index)
+        used_person_ids.add(person_id)
+        if match.score > 0:
+            selected.append(match)
+
+    selected.sort(key=lambda item: item.score, reverse=True)
+    return selected
+
+
 def enroll_person(
     db_path: Path,
     person_name: str,
@@ -247,15 +281,15 @@ def match_persons_for_photo(
         return [], person_count
 
     refs_by_person = _group_references_by_person(refs)
-    best_by_person: dict[int, PersonMatch] = {}
+    candidates_by_signature = [
+        _score_signature_against_references(signature, refs_by_person, smile_score=smile_score)
+        for signature, smile_score in signatures
+    ]
 
-    for signature, smile_score in signatures:
-        for match in _score_signature_against_references(signature, refs_by_person, smile_score=smile_score):
-            current = best_by_person.get(match.person_id)
-            if current is None or match.score > current.score:
-                best_by_person[match.person_id] = match
-
-    matches = sorted(best_by_person.values(), key=lambda item: item.score, reverse=True)
+    matches = _select_best_unique_matches(candidates_by_signature)
+    global _PERSON_TOP_K
+    if _PERSON_TOP_K is None:
+        _PERSON_TOP_K = 3
     return matches[:_PERSON_TOP_K], person_count
 
 

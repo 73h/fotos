@@ -17,7 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.app.config import AppConfig  # noqa: E402
 from src.app.index.store import ensure_schema, upsert_photo  # noqa: E402
 from src.app.ingest import ExifData, ImageRecord  # noqa: E402
-from src.app.persons.service import EnrollResult  # noqa: E402
+from src.app.persons.service import EnrollResult, PersonMatch  # noqa: E402
 from src.app.persons.ranking import AgingSelectionResult  # noqa: E402
 from src.app.web import create_app  # noqa: E402
 from src.app.web.admin_jobs import JobManager  # noqa: E402
@@ -1121,6 +1121,95 @@ class WebAppTests(unittest.TestCase):
 
             missing_remove_response = client.post(f"/api/photo-details/{photo_token}/persons/999999/remove")
             self.assertEqual(missing_remove_response.status_code, 404)
+
+    def test_photo_details_can_trigger_person_rematch_for_current_photo(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            workspace = Path(tmp_dir)
+            db_path = workspace / "data" / "photo_index.db"
+            cache_dir = workspace / "data" / "cache"
+            photos_dir = workspace / "photos"
+            photos_dir.mkdir(parents=True, exist_ok=True)
+            ensure_schema(db_path)
+
+            image_path = photos_dir / "rematch_sample.jpg"
+            Image.new("RGB", (300, 180), color=(90, 120, 160)).save(image_path)
+            stat = image_path.stat()
+            upsert_photo(
+                db_path=db_path,
+                record=ImageRecord(
+                    path=image_path,
+                    size_bytes=stat.st_size,
+                    modified_ts=stat.st_mtime,
+                ),
+                labels=["urlaub"],
+                person_count=1,
+            )
+
+            with sqlite3.connect(db_path) as conn:
+                conn.execute("INSERT INTO persons (name) VALUES (?)", ("Marie Curie",))
+                conn.execute("INSERT INTO persons (name) VALUES (?)", ("Albert Einstein",))
+                marie_id = int(conn.execute("SELECT id FROM persons WHERE name = ?", ("Marie Curie",)).fetchone()[0])
+                albert_id = int(conn.execute("SELECT id FROM persons WHERE name = ?", ("Albert Einstein",)).fetchone()[0])
+                conn.execute(
+                    """
+                    INSERT INTO photo_person_matches (photo_path, person_id, score, smile_score, matched_ts)
+                    VALUES (?, ?, ?, ?, strftime('%s','now'))
+                    """,
+                    (str(image_path), albert_id, 0.51, 0.10),
+                )
+
+            app = create_app(
+                app_config=AppConfig.from_workspace(workspace_root=workspace),
+                custom_db_path=str(db_path),
+                custom_cache_dir=str(cache_dir),
+            )
+            client = app.test_client()
+
+            photo_token = base64.urlsafe_b64encode(str(image_path).encode("utf-8")).decode("ascii").rstrip("=")
+            rematch_matches = [
+                PersonMatch(person_id=marie_id, person_name="Marie Curie", score=0.97, smile_score=0.66),
+            ]
+
+            with (
+                patch("src.app.detectors.labels.initialize_yolo_settings", return_value=None),
+                patch("src.app.persons.service.initialize_person_settings", return_value=None),
+                patch("src.app.persons.embeddings.initialize_insightface_settings", return_value=None),
+                patch("src.app.web.routes.match_persons_for_photo", return_value=(rematch_matches, 2)),
+            ):
+                rematch_response = client.post(f"/api/photo-details/{photo_token}/persons/rematch")
+
+            self.assertEqual(rematch_response.status_code, 200)
+            rematch_payload = rematch_response.get_json()
+            assert rematch_payload is not None
+            self.assertTrue(rematch_payload["ok"])
+            self.assertEqual(int(rematch_payload["person_count"]), 2)
+            self.assertEqual(int(rematch_payload["match_count"]), 1)
+            self.assertEqual(rematch_payload["persons"][0]["person_name"], "Marie Curie")
+
+            with sqlite3.connect(db_path) as conn:
+                match_rows = conn.execute(
+                    "SELECT person_id, score FROM photo_person_matches WHERE photo_path = ? ORDER BY person_id",
+                    (str(image_path),),
+                ).fetchall()
+                person_count_row = conn.execute(
+                    "SELECT person_count FROM photos WHERE path = ?",
+                    (str(image_path),),
+                ).fetchone()
+
+            self.assertEqual(len(match_rows), 1)
+            self.assertEqual(int(match_rows[0][0]), marie_id)
+            self.assertAlmostEqual(float(match_rows[0][1]), 0.97, places=6)
+            self.assertIsNotNone(person_count_row)
+            self.assertEqual(int(person_count_row[0]), 2)
+
+            details_response = client.get(f"/api/photo-details/{photo_token}")
+            self.assertEqual(details_response.status_code, 200)
+            details_payload = details_response.get_json()
+            assert details_payload is not None
+            self.assertEqual(
+                [person["name"] for person in details_payload["elements"]["persons"]],
+                ["Marie Curie"],
+            )
 
 
 if __name__ == "__main__":

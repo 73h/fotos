@@ -732,6 +732,20 @@ body {
   padding: 20px;
 }
 
+.detail-feedback {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #2b3442;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.detail-feedback--success {
+  background: rgba(36, 110, 64, 0.22);
+  border-color: rgba(116, 214, 128, 0.45);
+  color: #b8f0bf;
+}
+
 .detail-section {
   display: flex;
   flex-direction: column;

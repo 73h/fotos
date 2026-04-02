@@ -29,7 +29,7 @@ from ..albums.export import export_album_zip, parse_ratio
 from ..index.store import ensure_schema, get_admin_config, parse_search_filters, save_admin_config
 from ..persons import list_persons
 from ..persons.ranking import select_aging_timelapse_photo_paths
-from ..persons.service import enroll_person_from_paths
+from ..persons.service import enroll_person_from_paths, match_persons_for_photo, persist_matches_for_photo
 from ..search.query import run_search_page
 
 from .thumbnails import ensure_thumbnail
@@ -1061,6 +1061,65 @@ def api_remove_photo_person_match(token: str, person_id: int):
             "person_id": person_id,
             "person_name": str(existing["name"]),
             "remaining_person_count": remaining_count,
+        }
+    )
+
+
+@web_blueprint.post("/api/photo-details/<token>/persons/rematch")
+def api_rematch_photo_persons(token: str):
+    try:
+        path = _decode_path(token)
+    except ValueError:
+        return jsonify({"error": "invalid token"}), 400
+
+    if not path.exists() or not path.is_file():
+        return jsonify({"error": "photo not found"}), 404
+
+    db_path: Path = current_app.config["DB_PATH"]
+    if not db_path.exists():
+        return jsonify({"error": "index not found"}), 404
+
+    try:
+        from ..detectors.labels import initialize_yolo_settings
+        from ..persons.embeddings import initialize_insightface_settings
+        from ..persons.service import initialize_person_settings
+
+        initialize_yolo_settings(db_path)
+        initialize_person_settings(db_path)
+        initialize_insightface_settings(db_path)
+
+        admin_config = get_admin_config(db_path)
+        preferred_backend = str(admin_config.get("person_backend") or "insightface").strip() or None
+
+        matches, person_count = match_persons_for_photo(
+            db_path=db_path,
+            photo_path=path,
+            preferred_backend=preferred_backend,
+        )
+        persist_matches_for_photo(db_path=db_path, photo_path=path, matches=matches)
+
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "UPDATE photos SET person_count = ? WHERE path = ?",
+                (person_count, str(path)),
+            )
+    except Exception as error:
+        return jsonify({"error": f"person rematch failed: {error}"}), 500
+
+    return jsonify(
+        {
+            "ok": True,
+            "person_count": person_count,
+            "match_count": len(matches),
+            "persons": [
+                {
+                    "person_id": match.person_id,
+                    "person_name": match.person_name,
+                    "score": float(match.score),
+                    "smile_score": float(match.smile_score) if match.smile_score is not None else None,
+                }
+                for match in matches
+            ],
         }
     )
 
