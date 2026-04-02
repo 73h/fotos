@@ -957,6 +957,7 @@
 
     // Set image URL
     photoImg.src = `/photo/${photoToken}`;
+    modal.dataset.photoToken = photoToken;
 
     // Load details
     detailsDiv.innerHTML = '<div class="details-loading">Lade Details...</div>';
@@ -969,7 +970,7 @@
       }
 
       const data = await response.json();
-      detailsDiv.innerHTML = buildDetailsHTML(data);
+      detailsDiv.innerHTML = buildDetailsHTML(data, photoToken);
     } catch (error) {
       console.error("Error loading photo details:", error);
       detailsDiv.innerHTML = '<div class="details-loading">Fehler beim Laden der Details.</div>';
@@ -988,11 +989,12 @@
     const modal = document.getElementById("photo-modal");
     if (modal) {
       modal.classList.remove("active");
+      delete modal.dataset.photoToken;
       document.body.style.overflow = "";
     }
   }
 
-  function buildDetailsHTML(data) {
+  function buildDetailsHTML(data, photoToken) {
     const sections = [];
 
     // File Info Section
@@ -1017,52 +1019,66 @@
       sections.push(`
         <div class="detail-section">
           <div class="detail-section-title">Labels</div>
-          <div style="display: flex; flex-wrap: wrap; gap: 6px;">
-            ${data.labels.map(label => `<span style="background: #1f2c3d; padding: 3px 8px; border-radius: 4px; font-size: 11px; color: #9ec3ff;">${escapeHtml(label)}</span>`).join('')}
+          <div class="detail-chip-list">
+            ${data.labels.map(label => `<span class="detail-chip">${escapeHtml(label)}</span>`).join('')}
           </div>
         </div>
       `);
     }
 
-    // EXIF Data Section
+    if (data.elements) {
+      const objects = Array.isArray(data.elements.objects) ? data.elements.objects : [];
+      const animals = Array.isArray(data.elements.animals) ? data.elements.animals : [];
+      const persons = Array.isArray(data.elements.persons) ? data.elements.persons : [];
+
+      const personRows = persons.length > 0
+        ? persons.map((person) => {
+            const scoreText = Number.isFinite(Number(person.score))
+              ? `${(Number(person.score) * 100).toFixed(1)} %`
+              : "-";
+            const smileText = Number.isFinite(Number(person.smile_score))
+              ? `${(Number(person.smile_score) * 100).toFixed(1)} %`
+              : "-";
+            return `
+              <div class="person-mark-row">
+                <div>
+                  <div class="person-mark-name">${escapeHtml(person.name || "Unbekannt")}</div>
+                  <div class="person-mark-meta">Match: ${escapeHtml(scoreText)} | Smile: ${escapeHtml(smileText)}</div>
+                </div>
+                <button
+                  type="button"
+                  class="person-mark-remove-btn"
+                  onclick="removePersonMark('${escapeHtml(photoToken)}', ${Number(person.person_id)}, this)"
+                >
+                  Entfernen
+                </button>
+              </div>
+            `;
+          }).join("")
+        : '<div class="detail-muted">Keine Personenmarkierungen gefunden.</div>';
+
+      sections.push(`
+        <div class="detail-section">
+          <div class="detail-section-title">Erkannte Elemente</div>
+          <div class="detail-row">
+            <div class="detail-label">Objekte</div>
+            <div class="detail-value">${objects.length > 0 ? escapeHtml(objects.join(", ")) : "-"}</div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Tiere</div>
+            <div class="detail-value">${animals.length > 0 ? escapeHtml(animals.join(", ")) : "-"}</div>
+          </div>
+          <div class="detail-row detail-row-stack">
+            <div class="detail-label">Personen</div>
+            <div class="detail-value">${personRows}</div>
+          </div>
+        </div>
+      `);
+    }
+
+    // EXIF Data Section (vollstaendige Schluessel aus exif_json)
     if (data.exif && Object.keys(data.exif).length > 0) {
-      const exifRows = [];
-
-      // Camera Info
-      if (data.exif.camera_make || data.exif.camera_model) {
-        exifRows.push({ label: "Kamera", value: [data.exif.camera_make, data.exif.camera_model].filter(Boolean).join(" ") });
-      }
-      if (data.exif.lens) {
-        exifRows.push({ label: "Objektiv", value: data.exif.lens });
-      }
-
-      // Photo Settings
-      if (data.exif.focal_length) {
-        exifRows.push({ label: "Brennweite", value: data.exif.focal_length });
-      }
-      if (data.exif.f_number) {
-        exifRows.push({ label: "Blende", value: data.exif.f_number });
-      }
-      if (data.exif.exposure_time) {
-        exifRows.push({ label: "Belichtungszeit", value: data.exif.exposure_time });
-      }
-      if (data.exif.iso) {
-        exifRows.push({ label: "ISO", value: data.exif.iso.toString() });
-      }
-
-      // Date/Time
-      if (data.exif.datetime) {
-        exifRows.push({ label: "Aufnahmedatum", value: new Date(data.exif.datetime * 1000).toLocaleString('de-DE') });
-      }
-
-      // Location
-      if (data.exif.latitude && data.exif.longitude) {
-        exifRows.push({
-          label: "Koordinaten",
-          value: `${data.exif.latitude.toFixed(6)}, ${data.exif.longitude.toFixed(6)}`
-        });
-      }
-
+      const exifRows = flattenExifEntries(data.exif);
       if (exifRows.length > 0) {
         sections.push(buildSection("EXIF-Daten", exifRows));
       }
@@ -1087,6 +1103,74 @@
     `;
   }
 
+  function flattenExifEntries(exifObj, prefix = "") {
+    if (!exifObj || typeof exifObj !== "object") {
+      return [];
+    }
+
+    const entries = [];
+    Object.keys(exifObj).sort().forEach((key) => {
+      const value = exifObj[key];
+      const fullKey = prefix ? `${prefix}.${key}` : key;
+
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        entries.push(...flattenExifEntries(value, fullKey));
+        return;
+      }
+
+      let displayValue = "-";
+      if (Array.isArray(value)) {
+        displayValue = value.map((item) => String(item)).join(", ");
+      } else if (value !== null && value !== undefined && String(value) !== "") {
+        displayValue = String(value);
+      }
+      entries.push({ label: fullKey, value: displayValue });
+    });
+    return entries;
+  }
+
+  async function removePersonMark(photoToken, personId, buttonEl) {
+    const modal = document.getElementById("photo-modal");
+    const detailsDiv = document.getElementById("modal-details");
+    if (!detailsDiv) return;
+
+    const confirmed = window.confirm("Personenmarkierung wirklich entfernen?");
+    if (!confirmed) return;
+
+    if (buttonEl) {
+      buttonEl.disabled = true;
+      buttonEl.textContent = "Entferne...";
+    }
+
+    try {
+      const response = await fetch(`/api/photo-details/${photoToken}/persons/${personId}/remove`, {
+        method: "POST",
+        headers: { "HX-Request": "true" },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || "Entfernen fehlgeschlagen.");
+      }
+
+      const refreshResponse = await fetch(`/api/photo-details/${photoToken}`);
+      if (!refreshResponse.ok) {
+        throw new Error("Details konnten nach dem Entfernen nicht neu geladen werden.");
+      }
+      const refreshedData = await refreshResponse.json();
+      detailsDiv.innerHTML = buildDetailsHTML(refreshedData, photoToken);
+
+      if (modal && modal.dataset && modal.dataset.photoToken === photoToken && typeof window.location !== "undefined") {
+        // Keine harte Seitenaktualisierung: Nur Ergebnisgrid auf Wunsch mit normaler Suche neu laden.
+      }
+    } catch (error) {
+      window.alert(`Fehler: ${error}`);
+      if (buttonEl) {
+        buttonEl.disabled = false;
+        buttonEl.textContent = "Entfernen";
+      }
+    }
+  }
+
   function formatFileSize(bytes) {
     if (bytes === 0) return "0 Bytes";
     const k = 1024;
@@ -1103,6 +1187,7 @@
 
   window.openPhotoModal = openPhotoModal;
   window.closePhotoModal = closePhotoModal;
+  window.removePersonMark = removePersonMark;
   window.toggleMenu = toggleMenu;
 
   document.addEventListener("DOMContentLoaded", () => {

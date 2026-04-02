@@ -738,6 +738,20 @@ body {
   gap: 8px;
 }
 
+.detail-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.detail-chip {
+  background: #1f2c3d;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #9ec3ff;
+}
+
 .detail-section-title {
   font-weight: bold;
   color: #9ec3ff;
@@ -760,6 +774,10 @@ body {
   border-bottom: none;
 }
 
+.detail-row.detail-row-stack {
+  grid-template-columns: 120px 1fr;
+}
+
 .detail-label {
   color: #b9c4d1;
   font-weight: 500;
@@ -774,6 +792,52 @@ body {
   font-family: monospace;
   font-size: 12px;
   color: #74d680;
+}
+
+.detail-muted {
+  color: #9ba7b8;
+}
+
+.person-mark-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid #1a202c;
+}
+
+.person-mark-row:last-child {
+  border-bottom: none;
+}
+
+.person-mark-name {
+  color: #e7edf5;
+  font-weight: 600;
+}
+
+.person-mark-meta {
+  color: #9ba7b8;
+  font-size: 12px;
+}
+
+.person-mark-remove-btn {
+  border: 1px solid #b94a4a;
+  background: #3b1f24;
+  color: #ffd7d7;
+  border-radius: 6px;
+  padding: 5px 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.person-mark-remove-btn:hover {
+  background: #5a252d;
+}
+
+.person-mark-remove-btn:disabled {
+  opacity: 0.7;
+  cursor: wait;
 }
 
 @media (max-width: 1200px) {

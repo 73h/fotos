@@ -944,6 +944,11 @@ def api_photo_details(token: str):
         "image_info": {},
         "labels": [],
         "exif": {},
+        "elements": {
+            "objects": [],
+            "animals": [],
+            "persons": [],
+        },
     }
 
     # Get image info (dimensions, format)
@@ -962,7 +967,7 @@ def api_photo_details(token: str):
                 conn.row_factory = sqlite3.Row
                 row = conn.execute(
                     "SELECT labels_json, exif_json FROM photos WHERE path = ?",
-                    (str(path),)
+                    (str(path),),
                 ).fetchone()
 
                 if row:
@@ -973,33 +978,91 @@ def api_photo_details(token: str):
                     except (json.JSONDecodeError, TypeError):
                         result["labels"] = []
 
+                    if "object" in result["labels"]:
+                        result["elements"]["objects"].append("Objekt erkannt")
+                    if "animal" in result["labels"]:
+                        result["elements"]["animals"].append("Tier erkannt")
+
                     # Parse EXIF data
                     try:
                         exif_data = json.loads(row["exif_json"] or "{}")
                         if isinstance(exif_data, dict):
-                            # Map EXIF fields to friendly names
-                            exif_mapping = {
-                                "camera_make": "camera_make",
-                                "camera_model": "camera_model",
-                                "lens": "lens",
-                                "focal_length": "focal_length",
-                                "f_number": "f_number",
-                                "exposure_time": "exposure_time",
-                                "iso": "iso",
-                                "datetime": "datetime",
-                                "latitude": "latitude",
-                                "longitude": "longitude",
-                            }
-
-                            for db_key, result_key in exif_mapping.items():
-                                if db_key in exif_data:
-                                    result["exif"][result_key] = exif_data[db_key]
+                            result["exif"] = exif_data
                     except (json.JSONDecodeError, TypeError):
                         result["exif"] = {}
+
+                person_rows = conn.execute(
+                    """
+                    SELECT p.id, p.name, m.score, m.smile_score
+                    FROM photo_person_matches m
+                    JOIN persons p ON p.id = m.person_id
+                    WHERE m.photo_path = ?
+                    ORDER BY m.score DESC, lower(p.name) ASC
+                    """,
+                    (str(path),),
+                ).fetchall()
+                for person_row in person_rows:
+                    result["elements"]["persons"].append(
+                        {
+                            "person_id": int(person_row["id"]),
+                            "name": str(person_row["name"]),
+                            "score": float(person_row["score"]),
+                            "smile_score": float(person_row["smile_score"]) if person_row["smile_score"] is not None else None,
+                        }
+                    )
         except Exception:
             pass
 
     return jsonify(result)
+
+
+@web_blueprint.post("/api/photo-details/<token>/persons/<int:person_id>/remove")
+def api_remove_photo_person_match(token: str, person_id: int):
+    try:
+        path = _decode_path(token)
+    except ValueError:
+        return jsonify({"error": "invalid token"}), 400
+
+    db_path: Path = current_app.config["DB_PATH"]
+    if not db_path.exists():
+        return jsonify({"error": "index not found"}), 404
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        existing = conn.execute(
+            """
+            SELECT p.name
+            FROM photo_person_matches m
+            JOIN persons p ON p.id = m.person_id
+            WHERE m.photo_path = ? AND m.person_id = ?
+            """,
+            (str(path), person_id),
+        ).fetchone()
+        if existing is None:
+            return jsonify({"error": "person mark not found"}), 404
+
+        conn.execute(
+            "DELETE FROM photo_person_matches WHERE photo_path = ? AND person_id = ?",
+            (str(path), person_id),
+        )
+        remaining_row = conn.execute(
+            "SELECT COUNT(*) FROM photo_person_matches WHERE photo_path = ?",
+            (str(path),),
+        ).fetchone()
+        remaining_count = int(remaining_row[0]) if remaining_row is not None else 0
+        conn.execute(
+            "UPDATE photos SET person_count = ? WHERE path = ?",
+            (remaining_count, str(path)),
+        )
+
+    return jsonify(
+        {
+            "ok": True,
+            "person_id": person_id,
+            "person_name": str(existing["name"]),
+            "remaining_person_count": remaining_count,
+        }
+    )
 
 
 @web_blueprint.post("/api/albums/<int:album_id>/export-zip")

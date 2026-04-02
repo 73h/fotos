@@ -1013,6 +1013,115 @@ class WebAppTests(unittest.TestCase):
                         with Image.open(image_file) as img:
                             self.assertEqual(img.width * 9, img.height * 16)
 
+    def test_photo_details_include_full_exif_elements_and_person_mark_can_be_removed(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            workspace = Path(tmp_dir)
+            db_path = workspace / "data" / "photo_index.db"
+            cache_dir = workspace / "data" / "cache"
+            photos_dir = workspace / "photos"
+            photos_dir.mkdir(parents=True, exist_ok=True)
+            ensure_schema(db_path)
+
+            image_path = photos_dir / "detail_sample.jpg"
+            Image.new("RGB", (320, 200), color=(110, 130, 180)).save(image_path)
+            stat = image_path.stat()
+            upsert_photo(
+                db_path=db_path,
+                record=ImageRecord(
+                    path=image_path,
+                    size_bytes=stat.st_size,
+                    modified_ts=stat.st_mtime,
+                    taken_ts=stat.st_mtime,
+                    exif_data=ExifData(
+                        taken_ts=stat.st_mtime,
+                        latitude=48.1372,
+                        longitude=11.5756,
+                        altitude=520.0,
+                        camera_model="DetailCam",
+                        iso=320,
+                        f_number=2.8,
+                        shutter_speed="1/125",
+                        focal_length=35.0,
+                        description="Testbild",
+                    ),
+                ),
+                labels=["urlaub", "animal", "object"],
+                person_count=2,
+            )
+
+            with sqlite3.connect(db_path) as conn:
+                conn.execute("INSERT INTO persons (name) VALUES (?)", ("Marie Curie",))
+                conn.execute("INSERT INTO persons (name) VALUES (?)", ("Albert Einstein",))
+                marie_id = int(conn.execute("SELECT id FROM persons WHERE name = ?", ("Marie Curie",)).fetchone()[0])
+                albert_id = int(conn.execute("SELECT id FROM persons WHERE name = ?", ("Albert Einstein",)).fetchone()[0])
+                conn.execute(
+                    """
+                    INSERT INTO photo_person_matches (photo_path, person_id, score, smile_score, matched_ts)
+                    VALUES (?, ?, ?, ?, strftime('%s','now'))
+                    """,
+                    (str(image_path), marie_id, 0.93, 0.81),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO photo_person_matches (photo_path, person_id, score, smile_score, matched_ts)
+                    VALUES (?, ?, ?, ?, strftime('%s','now'))
+                    """,
+                    (str(image_path), albert_id, 0.87, 0.22),
+                )
+
+            app = create_app(
+                app_config=AppConfig.from_workspace(workspace_root=workspace),
+                custom_db_path=str(db_path),
+                custom_cache_dir=str(cache_dir),
+            )
+            client = app.test_client()
+
+            photo_token = base64.urlsafe_b64encode(str(image_path).encode("utf-8")).decode("ascii").rstrip("=")
+            details_response = client.get(f"/api/photo-details/{photo_token}")
+            self.assertEqual(details_response.status_code, 200)
+            details_payload = details_response.get_json()
+            assert details_payload is not None
+
+            self.assertEqual(details_payload["exif"]["camera_model"], "DetailCam")
+            self.assertEqual(int(details_payload["exif"]["iso"]), 320)
+            self.assertIn("objects", details_payload["elements"])
+            self.assertIn("animals", details_payload["elements"])
+            self.assertEqual(len(details_payload["elements"]["persons"]), 2)
+
+            marie_match = next(person for person in details_payload["elements"]["persons"] if person["name"] == "Marie Curie")
+            self.assertAlmostEqual(float(marie_match["smile_score"]), 0.81, places=3)
+
+            remove_response = client.post(f"/api/photo-details/{photo_token}/persons/{marie_id}/remove")
+            self.assertEqual(remove_response.status_code, 200)
+            remove_payload = remove_response.get_json()
+            assert remove_payload is not None
+            self.assertTrue(remove_payload["ok"])
+            self.assertEqual(int(remove_payload["remaining_person_count"]), 1)
+
+            with sqlite3.connect(db_path) as conn:
+                remaining_matches = conn.execute(
+                    "SELECT COUNT(*) FROM photo_person_matches WHERE photo_path = ?",
+                    (str(image_path),),
+                ).fetchone()
+                person_count_row = conn.execute(
+                    "SELECT person_count FROM photos WHERE path = ?",
+                    (str(image_path),),
+                ).fetchone()
+            self.assertIsNotNone(remaining_matches)
+            self.assertEqual(int(remaining_matches[0]), 1)
+            self.assertIsNotNone(person_count_row)
+            self.assertEqual(int(person_count_row[0]), 1)
+
+            details_after_remove_response = client.get(f"/api/photo-details/{photo_token}")
+            self.assertEqual(details_after_remove_response.status_code, 200)
+            details_after_remove_payload = details_after_remove_response.get_json()
+            assert details_after_remove_payload is not None
+            remaining_names = {person["name"] for person in details_after_remove_payload["elements"]["persons"]}
+            self.assertEqual(remaining_names, {"Albert Einstein"})
+
+            missing_remove_response = client.post(f"/api/photo-details/{photo_token}/persons/999999/remove")
+            self.assertEqual(missing_remove_response.status_code, 404)
+
 
 if __name__ == "__main__":
     unittest.main()
