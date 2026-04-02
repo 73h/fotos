@@ -315,6 +315,7 @@ class AdminService:
     ) -> None:
         """Führt Rematch aus."""
         from ..persons.embeddings import initialize_insightface_settings
+        from ..persons.store import get_photos_needing_rematch
 
         db_path = self.app_config.resolve_db_path()
         if not db_path.exists():
@@ -328,19 +329,27 @@ class AdminService:
         with sqlite3.connect(db_path) as conn:
             rows = conn.execute("SELECT path FROM photos ORDER BY path").fetchall()
 
-        photo_paths = [Path(row[0]) for row in rows]
-        existing = [p for p in photo_paths if p.exists()]
-        missing = len(photo_paths) - len(existing)
+        photo_paths_all = [Path(row[0]) for row in rows]
+        photo_paths_existing = [p for p in photo_paths_all if p.exists()]
+        photo_paths_str = [str(p) for p in photo_paths_existing]
+        missing = len(photo_paths_all) - len(photo_paths_existing)
+
+        # Filtere nur die Fotos, die ein Rematch brauchen
+        photos_needing_rematch = get_photos_needing_rematch(db_path, photo_paths_str)
+        existing = [Path(p) for p in photos_needing_rematch]
 
         if not existing:
-            job.message = "Keine indizierten Fotos gefunden"
+            job.message = "Keine Fotos brauchen Rematch"
             return
 
         job.total = len(existing)
-        job.message = (
-            f"Berechne Smile-Scores für {len(existing)} Fotos"
-            + (f" ({missing} nicht mehr vorhanden, werden übersprungen)" if missing else "")
-        )
+        if missing:
+            job.message = (
+                f"Berechne Personen-Matches für {len(existing)} Fotos (übrig von {len(photo_paths_existing)}, "
+                f"{missing} nicht mehr vorhanden)"
+            )
+        else:
+            job.message = f"Berechne Personen-Matches für {len(existing)} Fotos (übrig von {len(photo_paths_existing)})"
 
         safe_workers = max(1, workers)
 

@@ -95,7 +95,8 @@ def ensure_schema(db_path: Path) -> None:
             """
             CREATE TABLE IF NOT EXISTS persons (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE
+                name TEXT NOT NULL UNIQUE,
+                version INTEGER NOT NULL DEFAULT 1
             )
             """
         )
@@ -121,6 +122,7 @@ def ensure_schema(db_path: Path) -> None:
                 score REAL NOT NULL,
                 smile_score REAL,
                 matched_ts REAL NOT NULL,
+                person_version INTEGER NOT NULL DEFAULT 1,
                 PRIMARY KEY(photo_path, person_id),
                 FOREIGN KEY(person_id) REFERENCES persons(id)
             )
@@ -206,6 +208,14 @@ def ensure_schema(db_path: Path) -> None:
         }
         if "smile_score" not in existing_person_match_columns:
             conn.execute("ALTER TABLE photo_person_matches ADD COLUMN smile_score REAL")
+        if "person_version" not in existing_person_match_columns:
+            conn.execute("ALTER TABLE photo_person_matches ADD COLUMN person_version INTEGER NOT NULL DEFAULT 1")
+
+        existing_person_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(persons)").fetchall()
+        }
+        if "version" not in existing_person_columns:
+            conn.execute("ALTER TABLE persons ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
 
         conn.execute(
             """
