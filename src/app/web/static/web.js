@@ -1059,11 +1059,25 @@
 
     // File Info Section
     if (data.file_info) {
-      sections.push(buildSection("Dateiinformationen", [
+      const fileInfoRows = [
         { label: "Pfad", value: data.file_info.path, code: true },
         { label: "Größe", value: formatFileSize(data.file_info.size_bytes) },
-        { label: "Geändert", value: new Date(data.file_info.modified_ts * 1000).toLocaleString('de-DE') },
-      ]));
+      ];
+
+      // Add taken_ts if available
+      if (data.file_info.taken_ts !== undefined && data.file_info.taken_ts !== null) {
+        fileInfoRows.push({
+          label: "Aufnahmedatum",
+          value: new Date(data.file_info.taken_ts * 1000).toLocaleString('de-DE')
+        });
+      }
+
+      fileInfoRows.push({
+        label: "Geändert",
+        value: new Date(data.file_info.modified_ts * 1000).toLocaleString('de-DE')
+      });
+
+      sections.push(buildSection("Dateiinformationen", fileInfoRows));
     }
 
     // Image Info Section

@@ -967,11 +967,15 @@ def api_photo_details(token: str):
             with sqlite3.connect(db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 row = conn.execute(
-                    "SELECT labels_json, exif_json FROM photos WHERE path = ?",
+                    "SELECT labels_json, exif_json, taken_ts FROM photos WHERE path = ?",
                     (str(path),),
                 ).fetchone()
 
                 if row:
+                    # Add taken_ts to file_info if available
+                    if row["taken_ts"] is not None:
+                        result["file_info"]["taken_ts"] = float(row["taken_ts"])
+                    
                     # Parse labels
                     try:
                         labels = json.loads(row["labels_json"] or "[]")
