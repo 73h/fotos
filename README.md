@@ -236,13 +236,6 @@ Contributions sind willkommen! Bitte:
 
 ---
 
-## 🤝 Support
-
-- 🐛 [Issues](https://github.com/yourusername/fotos/issues)
-- 💬 [Diskussionen](https://github.com/yourusername/fotos/discussions)
-
----
-
 ## 🎉 Credits
 
 Gebaut mit:
