@@ -1,80 +1,89 @@
 {% extends 'base.html' %}
 
+{% block title %}Fotos Suche{% endblock %}
+
+{% block main_class %}layout--wide{% endblock %}
+
 {% block content %}
-<div class="search-layout">
-  <section class="search-main">
-    <form
-      id="search-form"
-      class="search-form"
-      hx-get="{{ url_for('web.search_partial') }}"
-      hx-target="#results"
-      hx-push-url="true"
-      hx-indicator="#loading"
-    >
-      <input type="text" name="q" value="{{ query }}" placeholder="z. B. hund strand person:max person:marie month:3 year:2023" />
-      <input type="number" name="per_page" value="{{ per_page }}" min="1" max="200" />
-      <input type="hidden" name="album_id" value="{{ active_album_id if active_album_id else '' }}" />
-      <select name="person_id" id="person-filter-select" onchange="filterByPerson()">
-        <option value="">Alle Personen</option>
-        {% for person in persons %}
-        <option value="{{ person.name }}">{{ person.name }} ({{ person.photo_count }})</option>
-        {% endfor %}
-      </select>
+<div class="page-shell page-shell--search">
 
-      <select id="month-filter-select" onchange="updateDateFilter()">
-        <option value="">Alle Monate</option>
-        <option value="1">Januar</option>
-        <option value="2">Februar</option>
-        <option value="3">März</option>
-        <option value="4">April</option>
-        <option value="5">Mai</option>
-        <option value="6">Juni</option>
-        <option value="7">Juli</option>
-        <option value="8">August</option>
-        <option value="9">September</option>
-        <option value="10">Oktober</option>
-        <option value="11">November</option>
-        <option value="12">Dezember</option>
-      </select>
+  <div class="search-layout">
+    <section class="search-main">
+      <div class="toolbar-panel">
+        <form
+          id="search-form"
+          class="search-form"
+          hx-get="{{ url_for('web.search_partial') }}"
+          hx-target="#results"
+          hx-push-url="true"
+          hx-indicator="#loading"
+        >
+          <input class="search-input search-input--query" type="text" name="q" value="{{ query }}" placeholder="z. B. hund strand person:max person:marie month:3 year:2023" aria-label="Suchbegriff" />
+          <input class="search-input search-input--compact" type="number" name="per_page" value="{{ per_page }}" min="1" max="200" aria-label="Treffer pro Seite" />
+          <input type="hidden" name="album_id" value="{{ active_album_id if active_album_id else '' }}" />
+          <select class="search-input search-input--select" name="person_id" id="person-filter-select" onchange="filterByPerson()" aria-label="Person filtern">
+            <option value="">Alle Personen</option>
+            {% for person in persons %}
+            <option value="{{ person.name }}">{{ person.name }} ({{ person.photo_count }})</option>
+            {% endfor %}
+          </select>
 
-      <input type="number" id="year-filter-input" placeholder="Jahr (z. B. 2023)" min="1900" max="2100" style="width: 120px;" onchange="updateDateFilter()" />
-      <input
-        type="number"
-        name="person_count"
-        id="person-count-input"
-        value="{{ person_count if person_count else '' }}"
-        min="1"
-        max="50"
-        placeholder="Personenzahl"
-        title="Zeigt nur Bilder mit genau dieser Anzahl erkannter Personen"
-        style="width: 100px;"
-      />
-      <button type="submit">Suchen</button>
-      <a class="search-reset-link" href="{{ url_for('web.home') }}">Zurücksetzen</a>
-      <span id="loading" class="loading">Lade...</span>
+          <select class="search-input search-input--select" id="month-filter-select" onchange="updateDateFilter()" aria-label="Monat filtern">
+            <option value="">Alle Monate</option>
+            <option value="1">Januar</option>
+            <option value="2">Februar</option>
+            <option value="3">März</option>
+            <option value="4">April</option>
+            <option value="5">Mai</option>
+            <option value="6">Juni</option>
+            <option value="7">Juli</option>
+            <option value="8">August</option>
+            <option value="9">September</option>
+            <option value="10">Oktober</option>
+            <option value="11">November</option>
+            <option value="12">Dezember</option>
+          </select>
 
-      <!-- Hamburger Menu -->
-      <div class="menu-container">
-        <button type="button" id="menu-toggle" class="menu-toggle" onclick="toggleMenu(event)" aria-label="Menü">
-          <span></span>
-          <span></span>
-          <span></span>
-        </button>
-        <nav id="menu-dropdown" class="menu-dropdown">
-          <a
-            id="open-map-link"
-            href="{{ url_for('web.map_view', q=query, album_id=active_album_id, person_count=person_count) }}"
-            data-base-url="{{ url_for('web.map_view') }}"
-            class="menu-item"
-          >
-            🗺️ Karte öffnen
-          </a>
-          <a href="{{ url_for('web.admin_page') }}" class="menu-item">
-            🔧 Admin-Dashboard
-          </a>
-        </nav>
+          <input class="search-input search-input--compact" type="number" id="year-filter-input" placeholder="Jahr (z. B. 2023)" min="1900" max="2100" onchange="updateDateFilter()" aria-label="Jahr filtern" />
+          <input
+            class="search-input search-input--compact"
+            type="number"
+            name="person_count"
+            id="person-count-input"
+            value="{{ person_count if person_count else '' }}"
+            min="1"
+            max="50"
+            placeholder="Personenzahl"
+            title="Zeigt nur Bilder mit genau dieser Anzahl erkannter Personen"
+            aria-label="Personenzahl"
+          />
+          <button type="submit" class="action-btn action-btn--primary">Suchen</button>
+          <a class="search-reset-link" href="{{ url_for('web.home') }}">Zurücksetzen</a>
+          <span id="loading" class="loading">Lade...</span>
+
+          <!-- Hamburger Menu -->
+          <div class="menu-container">
+            <button type="button" id="menu-toggle" class="menu-toggle" onclick="toggleMenu(event)" aria-label="Menü">
+              <span></span>
+              <span></span>
+              <span></span>
+            </button>
+            <nav id="menu-dropdown" class="menu-dropdown">
+              <a
+                id="open-map-link"
+                href="{{ url_for('web.map_view', q=query, album_id=active_album_id, person_count=person_count) }}"
+                data-base-url="{{ url_for('web.map_view') }}"
+                class="menu-item"
+              >
+                🗺️ Karte öffnen
+              </a>
+              <a href="{{ url_for('web.admin_page') }}" class="menu-item">
+                🔧 Admin-Dashboard
+              </a>
+            </nav>
+          </div>
+        </form>
       </div>
-    </form>
 
     {% if active_album_name %}
     <div class="active-filter-bar">
@@ -89,13 +98,14 @@
     {% endif %}
 
 
-    <section id="results">
-      {% include '_results.html' %}
+      <section id="results" class="results-shell">
+        {% include '_results.html' %}
+      </section>
     </section>
-  </section>
 
-  <aside id="album-sidebar" class="album-sidebar" data-sidebar-url="{{ url_for('web.albums_sidebar') }}">
-    {% include '_albums.html' %}
-  </aside>
+    <aside id="album-sidebar" class="album-sidebar" data-sidebar-url="{{ url_for('web.albums_sidebar') }}">
+      {% include '_albums.html' %}
+    </aside>
+  </div>
 </div>
 {% endblock %}

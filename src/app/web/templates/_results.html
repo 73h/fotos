@@ -3,20 +3,27 @@
 {% endif %}
 
 {% if total > 0 %}
-<div class="meta">
-  <strong>{{ total }}</strong> Treffer, Seite {{ page }} / {{ pages }}
+<div class="meta results-meta">
+  <div class="results-meta__stats"><strong>{{ total }}</strong> Treffer, Seite {{ page }} / {{ pages }}</div>
+  <div class="results-meta__hint">Klicke auf ein Foto für Details oder ziehe es direkt in ein Album.</div>
 </div>
 
 {% if items %}
 <div class="grid">
   {% for item in items %}
-  <article class="card photo-card" draggable="true" data-photo-token="{{ item.token }}" data-photo-path="{{ item.path }}" onclick="openPhotoModal('{{ item.token }}')" style="position: relative;">
+  <article class="card photo-card" draggable="true" data-photo-token="{{ item.token }}" data-photo-path="{{ item.path }}" onclick="openPhotoModal('{{ item.token }}')">
     {% if active_album_id %}
-    <button type="button" class="photo-remove-btn" onclick="event.stopPropagation(); removePhotoFromAlbum('{{ item.token }}', {{ active_album_id }}, this)" style="position: absolute; top: 5px; right: 5px; z-index: 10; background: rgba(255,0,0,0.7); color: white; border: none; border-radius: 3px; padding: 2px 6px; cursor: pointer; font-size: 12px;">✕</button>
+    <button
+      type="button"
+      class="photo-remove-btn"
+      data-photo-token="{{ item.token }}"
+      data-album-id="{{ active_album_id }}"
+      onclick="event.stopPropagation(); removePhotoFromAlbum(this.dataset.photoToken, this.dataset.albumId, this)"
+    >
+      ✕
+    </button>
     {% endif %}
     <img src="{{ item.thumb_url }}" alt="{{ item.path }}" loading="lazy" />
-    <div class="path">{{ item.path }}</div>
-    <div class="labels">{{ item.labels|join(', ') if item.labels else '-' }}</div>
   </article>
   {% endfor %}
 </div>

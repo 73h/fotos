@@ -3,13 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Fotos Suche</title>
+    <title>{% block title %}Fotos Suche{% endblock %}</title>
     <script src="https://unpkg.com/htmx.org@1.9.12"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='web.css') }}" />
     <script defer src="{{ url_for('static', filename='web.js') }}"></script>
+    {% block head %}{% endblock %}
   </head>
-  <body>
-    <main class="layout">
+  <body class="{% block body_class %}app-body{% endblock %}">
+    <main class="layout {% block main_class %}{% endblock %}">
       {% block content %}{% endblock %}
     </main>
 

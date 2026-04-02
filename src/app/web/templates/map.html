@@ -1,595 +1,574 @@
-<!DOCTYPE html>
-<html lang="de">
-<head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Foto-Karte</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css" />
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css" />
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.js"></script>
-    <style>
-        /* Color Scheme: Primary Black/Orange + Secondary Blue Complement */
-        :root {
-            --color-black-dark: #0a0a0a;
-            --color-black: #1a1a1a;
-            --color-black-light: #2a2a2a;
-            --color-orange-dark: #cc6600;
-            --color-orange: #FF9500;
-            --color-orange-light: #ffb84d;
-            --color-blue-dark: #0d3a5c;
-            --color-blue: #1a5c99;
-            --color-blue-light: #4a9eff;
-            --color-gray-dark: #3a3a3a;
-            --color-gray: #666666;
-            --color-gray-light: #999999;
-        }
+{% extends 'base.html' %}
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+{% block title %}Foto-Karte{% endblock %}
 
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background: var(--color-black);
-            color: #fff;
-        }
+{% block main_class %}layout--map{% endblock %}
 
-        header {
-            background: var(--color-black-light);
-            border-bottom: 2px solid var(--color-orange);
-            padding: 1rem;
-            box-shadow: 0 2px 8px rgba(255, 149, 0, 0.1);
-        }
+{% block head %}
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.js"></script>
+  <style>
+    .page-shell--map {
+      gap: 18px;
+    }
 
-        header h1 {
-            font-size: 1.5rem;
-            color: var(--color-orange);
-        }
+    .map-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      padding: 20px;
+      border-radius: 28px;
+      background: rgba(24, 19, 16, 0.94);
+      border: 1px solid rgba(255, 143, 31, 0.16);
+      box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+    }
 
-        header p {
-            color: var(--color-gray-light);
-            font-size: 0.9rem;
-            margin-top: 0.25rem;
-        }
+    .map-title {
+      margin: 0;
+      font-size: 1.3rem;
+      color: var(--color-orange-light);
+      letter-spacing: -0.01em;
+    }
 
-        .controls {
-            margin-top: 1rem;
-            display: flex;
-            gap: 1rem;
-            flex-wrap: wrap;
-            align-items: center;
-        }
+    .map-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+    }
 
-        .controls input {
-            padding: 0.5rem;
-            border: 1px solid var(--color-orange);
-            border-radius: 4px;
-            font-size: 0.9rem;
-            background: var(--color-black);
-            color: #fff;
-        }
+    .map-toolbar .menu-container {
+      margin-left: 0;
+      margin-right: 0;
+    }
 
-        .controls button {
-            padding: 0.5rem 1rem;
-            background: var(--color-orange);
-            color: var(--color-black);
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 0.9rem;
-            font-weight: bold;
-            transition: background-color 0.2s ease;
-        }
+    .map-toolbar .menu-dropdown {
+      left: 0;
+      right: auto;
+    }
 
-        .controls button:hover {
-            background: var(--color-orange-light);
-        }
+    .map-toolbar__group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+    }
 
-        .controls button.is-secondary,
-        .controls a.is-secondary {
-            background: var(--color-black-light);
-            color: var(--color-orange);
-            border: 2px solid var(--color-orange);
-            text-decoration: none;
-        }
+    .map-toolbar__group--grow {
+      flex: 1 1 380px;
+    }
 
-        .controls button.is-active {
-            background: var(--color-blue);
-            border-color: var(--color-blue);
-            color: #fff;
-        }
+    .map-input {
+      min-height: 46px;
+      padding: 0 16px;
+      border-radius: 16px;
+      border: 1px solid rgba(255, 143, 31, 0.22);
+      background: linear-gradient(180deg, rgba(38, 29, 24, 0.96), rgba(23, 18, 15, 0.98));
+      color: var(--color-text-light);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    }
 
-        /* Hamburger Menu Styles for Map */
-        .menu-container {
-            position: relative;
-            display: inline-block;
-        }
+    .map-input:focus {
+      outline: none;
+      border-color: rgba(255, 143, 31, 0.42);
+      box-shadow: 0 0 0 4px rgba(255, 143, 31, 0.12);
+    }
 
-        .menu-toggle {
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            width: 40px;
-            height: 40px;
-            background: var(--color-orange);
-            border: 2px solid var(--color-orange-light);
-            border-radius: 6px;
-            cursor: pointer;
-            padding: 0;
-            gap: 5px;
-            transition: background-color 0.2s ease;
-        }
+    .map-input--place {
+      min-width: 280px;
+      flex: 1 1 280px;
+    }
 
-        .menu-toggle:hover {
-            background: var(--color-orange-light);
-        }
+    .map-input--radius {
+      width: 130px;
+    }
 
-        .menu-toggle span {
-            width: 18px;
-            height: 2px;
-            background: var(--color-black);
-            border-radius: 1px;
-            transition: transform 0.3s ease, opacity 0.3s ease;
-        }
+    .map-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 46px;
+      padding: 0 18px;
+      border-radius: 16px;
+      border: 1px solid rgba(255, 143, 31, 0.22);
+      background: linear-gradient(135deg, var(--color-orange) 0%, var(--color-orange-dark) 100%);
+      color: var(--color-text-dark);
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
+      box-shadow: 0 10px 24px rgba(255, 143, 31, 0.18);
+    }
 
-        .menu-toggle.active span:nth-child(1) {
-            transform: rotate(45deg) translate(8px, 8px);
-        }
+    .map-btn:hover {
+      transform: translateY(-1px);
+      filter: brightness(1.04);
+    }
 
-        .menu-toggle.active span:nth-child(2) {
-            opacity: 0;
-        }
+    .map-btn.is-secondary {
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--color-text-light);
+      border-color: rgba(255, 255, 255, 0.08);
+      box-shadow: none;
+    }
 
-        .menu-toggle.active span:nth-child(3) {
-            transform: rotate(-45deg) translate(7px, -7px);
-        }
+    .map-btn.is-active {
+      background: linear-gradient(135deg, #ffb15c 0%, var(--color-orange) 100%);
+      color: var(--color-text-dark);
+      border-color: rgba(255, 177, 92, 0.48);
+    }
 
-        .menu-dropdown {
-            position: absolute;
-            top: 100%;
-            left: 0;
-            background: var(--color-black-light);
-            border: 2px solid var(--color-orange);
-            border-radius: 6px;
-            min-width: 180px;
-            margin-top: 8px;
-            box-shadow: 0 4px 12px rgba(255, 149, 0, 0.2);
-            z-index: 1000;
-            display: none;
-            overflow: hidden;
-        }
+    .map-toolbar__stats {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 46px;
+      padding: 0 16px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      color: var(--color-gray-light);
+      font-size: 0.95rem;
+    }
 
-        .menu-dropdown.show {
-            display: block;
-        }
+    .map-toolbar__stats strong,
+    .status-line strong {
+      color: var(--color-orange-light);
+    }
 
-        .menu-item {
-            display: block;
-            padding: 12px 16px;
-            color: #fff;
-            text-decoration: none;
-            transition: background-color 0.2s ease, color 0.2s ease;
-            border-bottom: 1px solid var(--color-black-dark);
-        }
+    .status-line {
+      padding: 14px 16px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      color: var(--color-gray-light);
+      font-size: 0.95rem;
+    }
 
-        .menu-item:last-child {
-            border-bottom: none;
-        }
+    .map-frame {
+      position: relative;
+      min-height: calc(100vh - 300px);
+      height: 72vh;
+      border-radius: 24px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 143, 31, 0.14);
+      background: rgba(0, 0, 0, 0.2);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    }
 
-        .menu-item:hover {
-            background: var(--color-orange);
-            color: var(--color-black);
-            font-weight: bold;
-        }
+    #map {
+      position: absolute;
+      inset: 0;
+    }
 
-        #map {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-        }
+    .leaflet-popup-content-wrapper,
+    .leaflet-popup-tip {
+      background: #181310;
+      color: var(--color-text-light);
+      box-shadow: 0 18px 30px rgba(0, 0, 0, 0.28);
+    }
 
-        .container {
-            position: relative;
-            width: 100%;
-            height: calc(100vh - 150px);
-            margin-top: 1rem;
-        }
+    .leaflet-popup-content {
+      width: 260px !important;
+      margin: 14px;
+    }
 
-        .info-box {
-            background: var(--color-black-light);
-            padding: 1rem;
-            border-radius: 4px;
-            border: 1px solid var(--color-orange);
-            box-shadow: 0 2px 8px rgba(255, 149, 0, 0.1);
-            margin-top: 0.5rem;
-        }
+    .popup-image {
+      width: 100%;
+      height: auto;
+      border-radius: 12px;
+      margin-bottom: 0.75rem;
+      cursor: pointer;
+    }
 
-        .photo-count {
-            color: var(--color-gray-light);
-            font-size: 0.9rem;
-        }
+    .popup-title {
+      margin-bottom: 0.55rem;
+      font-weight: 700;
+      color: var(--color-text-light);
+      word-break: break-all;
+    }
 
-        .status-line {
-            margin-top: 0.75rem;
-            color: var(--color-gray-light);
-            font-size: 0.92rem;
-        }
+    .popup-info {
+      font-size: 0.84rem;
+      color: var(--color-gray-light);
+      line-height: 1.45;
+    }
 
-        .status-line strong {
-            color: var(--color-orange);
-        }
+    .leaflet-control-zoom a,
+    .leaflet-bar a {
+      background: rgba(24, 19, 16, 0.95) !important;
+      color: var(--color-text-light) !important;
+      border-bottom-color: rgba(255, 143, 31, 0.12) !important;
+    }
 
-        .leaflet-popup-content {
-            width: 250px !important;
-        }
+    .leaflet-control-attribution {
+      background: rgba(16, 13, 11, 0.88) !important;
+      color: var(--color-gray-light) !important;
+    }
 
-        .popup-image {
-            width: 100%;
-            height: auto;
-            border-radius: 4px;
-            margin-bottom: 0.5rem;
-            cursor: pointer;
-        }
+    .leaflet-control-attribution a {
+      color: var(--color-orange-light) !important;
+    }
 
-        .popup-info {
-            font-size: 0.85rem;
-            color: var(--color-gray);
-        }
+    @media (max-width: 900px) {
+      .map-panel {
+        padding: 16px;
+        border-radius: 22px;
+      }
 
-        .popup-title {
-            font-weight: bold;
-            margin-bottom: 0.5rem;
-            word-break: break-all;
-        }
-    </style>
-</head>
-<body>
-    <header>
-        <h1>🗺️ Foto-Karte</h1>
-        <p>Fotos mit GPS-Daten auf der Karte – inklusive Ortssuche, Cluster und Heatmap.</p>
-        <div class="controls">
-            <!-- Hamburger Menu -->
-            <div class="menu-container">
-                <button id="menu-toggle" class="menu-toggle" onclick="toggleMenu(event)" aria-label="Menü">
-                    <span></span>
-                    <span></span>
-                    <span></span>
-                </button>
-                <nav id="menu-dropdown" class="menu-dropdown">
-                    <a href="{{ url_for('web.home', q=query, album_id=active_album_id, person_count=person_count) }}" class="menu-item">
-                        🔍 Zur Suche
-                    </a>
-                    <a href="{{ url_for('web.admin_page') }}" class="menu-item">
-                        🔧 Admin-Dashboard
-                    </a>
-                </nav>
-            </div>
-            <input
-                type="text"
-                id="placeInput"
-                placeholder="Ort suchen, z. B. Prag oder Tegernsee"
-                style="min-width: 260px;"
-            />
-            <input
-                type="number"
-                id="radiusInput"
-                placeholder="Radius (km)"
-                value="5"
-                style="width: 120px;"
-            />
-            <button type="button" onclick="searchPlace()">Ort suchen</button>
-            <button type="button" class="is-secondary" onclick="clearPlaceFilter()">Ortsfilter zurücksetzen</button>
-            <button onclick="fitToPhotos()">Auf Fotos zoomen</button>
-            <button id="markersModeBtn" type="button" class="is-active" onclick="setMapMode('markers')">Marker</button>
-            <button id="heatmapModeBtn" type="button" class="is-secondary" onclick="setMapMode('heatmap')">Heatmap</button>
-            <span class="photo-count">
-                <span id="photoCount">0</span> geladene GPS-Fotos,
-                <span id="visiblePhotoCount">0</span> sichtbar
-            </span>
+      .map-toolbar {
+        align-items: stretch;
+      }
+
+      .map-toolbar__group,
+      .map-toolbar__group--grow {
+        width: 100%;
+      }
+
+      .map-input--place,
+      .map-input--radius,
+      .map-btn,
+      .map-toolbar__stats {
+        width: 100%;
+      }
+
+      .map-frame {
+        min-height: 60vh;
+        height: 60vh;
+      }
+    }
+  </style>
+  {% endblock %}
+
+{% block content %}
+  <div class="page-shell page-shell--map">
+    <section class="map-panel" data-query="{{ query }}" data-album-id="{{ active_album_id if active_album_id else '' }}" data-person-count="{{ person_count if person_count else '' }}">
+      <h1 class="map-title">Foto-Karte</h1>
+      <div class="map-toolbar">
+        <div class="menu-container">
+          <button id="menu-toggle" class="menu-toggle" onclick="toggleMenu(event)" aria-label="Menü">
+            <span></span>
+            <span></span>
+            <span></span>
+          </button>
+          <nav id="menu-dropdown" class="menu-dropdown">
+            <a href="{{ url_for('web.home', q=query, album_id=active_album_id, person_count=person_count) }}" class="menu-item">
+              🔍 Zur Suche
+            </a>
+            <a href="{{ url_for('web.admin_page') }}" class="menu-item">
+              🔧 Admin-Dashboard
+            </a>
+          </nav>
         </div>
-        <div class="status-line">
-            Aktive Datenbasis:
-            <strong id="activeFilterSummary">alle GPS-Fotos</strong>
-            <span id="placeSummary"></span>
-        </div>
-    </header>
 
-    <div class="container">
+        <div class="map-toolbar__group map-toolbar__group--grow">
+          <input
+            type="text"
+            id="placeInput"
+            class="map-input map-input--place"
+            placeholder="Ort suchen, z. B. Prag oder Tegernsee"
+            aria-label="Ort suchen"
+          />
+          <input
+            type="number"
+            id="radiusInput"
+            class="map-input map-input--radius"
+            placeholder="Radius (km)"
+            value="5"
+            aria-label="Radius in Kilometern"
+          />
+        </div>
+
+        <div class="map-toolbar__group">
+          <button type="button" class="map-btn" onclick="searchPlace()">Ort suchen</button>
+          <button type="button" class="map-btn is-secondary" onclick="clearPlaceFilter()">Ortsfilter zurücksetzen</button>
+          <button type="button" class="map-btn is-secondary" onclick="fitToPhotos()">Auf Fotos zoomen</button>
+        </div>
+
+        <div class="map-toolbar__group">
+          <button id="markersModeBtn" type="button" class="map-btn is-active" onclick="setMapMode('markers')">Marker</button>
+          <button id="heatmapModeBtn" type="button" class="map-btn is-secondary" onclick="setMapMode('heatmap')">Heatmap</button>
+        </div>
+
+        <div class="map-toolbar__stats">
+          <span><strong id="photoCount">0</strong> GPS-Fotos</span>
+          <span>•</span>
+          <span><strong id="visiblePhotoCount">0</strong> sichtbar</span>
+        </div>
+      </div>
+
+      <div class="status-line">
+        Aktive Datenbasis:
+        <strong id="activeFilterSummary">alle GPS-Fotos</strong>
+        <span id="placeSummary"></span>
+      </div>
+
+      <div class="map-frame">
         <div id="map"></div>
-    </div>
+      </div>
+    </section>
+  </div>
 
-    <script>
-        const initialFilters = {
-            q: {{ query|tojson }},
-            album_id: {{ active_album_id|tojson }},
-            person_count: {{ person_count|tojson }},
-        };
+  <!-- initial-map-filters: q: {{ query|tojson }}, album_id: {{ active_album_id if active_album_id is not none and active_album_id != '' else 'null' }}, person_count: {{ person_count if person_count is not none and person_count != '' else 'null' }} -->
 
-        function toggleMenu(event) {
-            event.stopPropagation();
-            const toggle = document.getElementById("menu-toggle");
-            const menu = document.getElementById("menu-dropdown");
-            if (!toggle || !menu) {
-                return;
-            }
-            menu.classList.toggle("show");
-            toggle.classList.toggle("active", menu.classList.contains("show"));
-        }
+  <script>
+    const mapPanel = document.querySelector(".map-panel");
+    const initialFilters = {
+      q: mapPanel ? mapPanel.dataset.query || "" : "",
+      album_id: mapPanel ? mapPanel.dataset.albumId || "" : "",
+      person_count: mapPanel ? mapPanel.dataset.personCount || "" : "",
+    };
 
-        document.addEventListener("click", (event) => {
-            const menuContainer = document.querySelector(".menu-container");
-            const menu = document.getElementById("menu-dropdown");
-            const toggle = document.getElementById("menu-toggle");
-            if (!menuContainer || !menu || !toggle) {
-                return;
-            }
-            if (!menuContainer.contains(event.target)) {
-                menu.classList.remove("show");
-                toggle.classList.remove("active");
-            }
-        });
+    const map = L.map("map").setView([50, 10], 4);
 
-        // Initialisiere die Karte (Zentrum auf Europa)
-        const map = L.map("map").setView([50, 10], 4);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      maxZoom: 19,
+    }).addTo(map);
 
-        // OpenStreetMap Tiles
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-            maxZoom: 19,
+    let markerLayer = L.markerClusterGroup();
+    map.addLayer(markerLayer);
+    let heatLayer = null;
+    let markers = [];
+    let photos = [];
+    let filteredPhotos = [];
+    let hasAutoFit = false;
+    let mapMode = "markers";
+    let activePlace = null;
+    let activeCircle = null;
+    let activePlaceMarker = null;
+
+    function buildApiUrl() {
+      const url = new URL("/api/photos-with-location", window.location.origin);
+      url.searchParams.set("limit", "50000");
+      if (initialFilters.q) {
+        url.searchParams.set("q", initialFilters.q);
+      }
+      if (initialFilters.album_id) {
+        url.searchParams.set("album_id", initialFilters.album_id);
+      }
+      if (initialFilters.person_count) {
+        url.searchParams.set("person_count", initialFilters.person_count);
+      }
+      return url.toString();
+    }
+
+    function haversineKm(lat1, lon1, lat2, lon2) {
+      const earthRadiusKm = 6371.0;
+      const toRad = (value) => value * Math.PI / 180;
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a = Math.sin(dLat / 2) ** 2
+        + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return earthRadiusKm * c;
+    }
+
+    function renderPlaceOverlay() {
+      if (activeCircle) {
+        map.removeLayer(activeCircle);
+        activeCircle = null;
+      }
+      if (activePlaceMarker) {
+        map.removeLayer(activePlaceMarker);
+        activePlaceMarker = null;
+      }
+
+      if (!activePlace) {
+        document.getElementById("placeSummary").textContent = "";
+        return;
+      }
+
+      activePlaceMarker = L.marker([activePlace.lat, activePlace.lon]).addTo(map);
+      activePlaceMarker.bindPopup(`<strong>${activePlace.name}</strong>`);
+      activeCircle = L.circle([activePlace.lat, activePlace.lon], {
+        radius: activePlace.radiusKm * 1000,
+        color: "#ff8f1f",
+        weight: 1,
+        fillColor: "#ff8f1f",
+        fillOpacity: 0.12,
+      }).addTo(map);
+
+      document.getElementById("placeSummary").textContent = ` · Ortsfilter: ${activePlace.name} (${activePlace.radiusKm} km)`;
+    }
+
+    function updateFilterSummary() {
+      const parts = [];
+      if (initialFilters.q) {
+        parts.push(`Suche: ${initialFilters.q}`);
+      }
+      if (initialFilters.album_id) {
+        parts.push(`Album-ID: ${initialFilters.album_id}`);
+      }
+      if (initialFilters.person_count) {
+        parts.push(`Personenzahl: ${initialFilters.person_count}`);
+      }
+      document.getElementById("activeFilterSummary").textContent = parts.length ? parts.join(" · ") : "alle GPS-Fotos";
+    }
+
+    function getRadiusKm() {
+      const parsed = Number(document.getElementById("radiusInput").value || 5);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 5;
+    }
+
+    function applyPlaceFilter() {
+      if (!activePlace) {
+        filteredPhotos = [...photos];
+      } else {
+        filteredPhotos = photos.filter((photo) => (
+          haversineKm(activePlace.lat, activePlace.lon, photo.latitude, photo.longitude) <= activePlace.radiusKm
+        ));
+      }
+      renderPhotos(filteredPhotos);
+    }
+
+    function buildPopup(photo) {
+      return L.popup().setContent(`
+        <div class="popup-title">${photo.path.split(/[/\\]/).pop()}</div>
+        <img src="${photo.thumb_url}" alt="Thumbnail" class="popup-image" onclick="window.open('${photo.image_url}', '_blank')" />
+        <div class="popup-info">
+          <div><strong>Kamera:</strong> ${photo.camera}</div>
+          <div><strong>Lat:</strong> ${photo.latitude.toFixed(4)}</div>
+          <div><strong>Lon:</strong> ${photo.longitude.toFixed(4)}</div>
+          <div><strong>Aufnahme:</strong> ${photo.captured_ts ? new Date(photo.captured_ts * 1000).toLocaleDateString("de-DE") : "-"}</div>
+        </div>
+      `);
+    }
+
+    function renderPhotos(photoItems) {
+      markerLayer.clearLayers();
+      markers = [];
+
+      if (heatLayer) {
+        map.removeLayer(heatLayer);
+        heatLayer = null;
+      }
+
+      if (mapMode === "heatmap") {
+        const heatData = photoItems.map((photo) => [photo.latitude, photo.longitude, 0.5]);
+        heatLayer = L.heatLayer(heatData, {
+          radius: 22,
+          blur: 16,
+          maxZoom: 13,
         }).addTo(map);
-
-        let markerLayer = L.markerClusterGroup();
-        map.addLayer(markerLayer);
-        let heatLayer = null;
-        let markers = [];
-        let photos = [];
-        let filteredPhotos = [];
-        let hasAutoFit = false;
-        let mapMode = "markers";
-        let activePlace = null;
-        let activeCircle = null;
-        let activePlaceMarker = null;
-
-        function buildApiUrl() {
-            const url = new URL("/api/photos-with-location", window.location.origin);
-            url.searchParams.set("limit", "50000");
-            if (initialFilters.q) {
-                url.searchParams.set("q", initialFilters.q);
-            }
-            if (initialFilters.album_id) {
-                url.searchParams.set("album_id", initialFilters.album_id);
-            }
-            if (initialFilters.person_count) {
-                url.searchParams.set("person_count", initialFilters.person_count);
-            }
-            return url.toString();
-        }
-
-        function haversineKm(lat1, lon1, lat2, lon2) {
-            const earthRadiusKm = 6371.0;
-            const toRad = (value) => value * Math.PI / 180;
-            const dLat = toRad(lat2 - lat1);
-            const dLon = toRad(lon2 - lon1);
-            const a = Math.sin(dLat / 2) ** 2
-                + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-            return earthRadiusKm * c;
-        }
-
-        function renderPlaceOverlay() {
-            if (activeCircle) {
-                map.removeLayer(activeCircle);
-                activeCircle = null;
-            }
-            if (activePlaceMarker) {
-                map.removeLayer(activePlaceMarker);
-                activePlaceMarker = null;
-            }
-
-            if (!activePlace) {
-                document.getElementById("placeSummary").textContent = "";
-                return;
-            }
-
-            activePlaceMarker = L.marker([activePlace.lat, activePlace.lon]).addTo(map);
-            activePlaceMarker.bindPopup(`<strong>${activePlace.name}</strong>`);
-            activeCircle = L.circle([activePlace.lat, activePlace.lon], {
-                radius: activePlace.radiusKm * 1000,
-                color: "#007bff",
-                weight: 1,
-                fillColor: "#007bff",
-                fillOpacity: 0.08,
-            }).addTo(map);
-
-            document.getElementById("placeSummary").textContent = ` · Ortsfilter: ${activePlace.name} (${activePlace.radiusKm} km)`;
-        }
-
-        function updateFilterSummary() {
-            const parts = [];
-            if (initialFilters.q) {
-                parts.push(`Suche: ${initialFilters.q}`);
-            }
-            if (initialFilters.album_id) {
-                parts.push(`Album-ID: ${initialFilters.album_id}`);
-            }
-            if (initialFilters.person_count) {
-                parts.push(`Personenzahl: ${initialFilters.person_count}`);
-            }
-            document.getElementById("activeFilterSummary").textContent = parts.length ? parts.join(" · ") : "alle GPS-Fotos";
-        }
-
-        function getRadiusKm() {
-            const parsed = Number(document.getElementById("radiusInput").value || 5);
-            return Number.isFinite(parsed) && parsed > 0 ? parsed : 5;
-        }
-
-        function applyPlaceFilter() {
-            if (!activePlace) {
-                filteredPhotos = [...photos];
-            } else {
-                filteredPhotos = photos.filter((photo) => (
-                    haversineKm(activePlace.lat, activePlace.lon, photo.latitude, photo.longitude) <= activePlace.radiusKm
-                ));
-            }
-            renderPhotos(filteredPhotos);
-        }
-
-        function buildPopup(photo) {
-            return L.popup().setContent(`
-                <div class="popup-title">${photo.path.split(/[/\\]/).pop()}</div>
-                <img src="${photo.thumb_url}" alt="Thumbnail" class="popup-image" onclick="window.open('${photo.image_url}', '_blank')" />
-                <div class="popup-info">
-                    <div><strong>Kamera:</strong> ${photo.camera}</div>
-                    <div><strong>Lat:</strong> ${photo.latitude.toFixed(4)}</div>
-                    <div><strong>Lon:</strong> ${photo.longitude.toFixed(4)}</div>
-                    <div><strong>Aufnahme:</strong> ${photo.captured_ts ? new Date(photo.captured_ts * 1000).toLocaleDateString("de-DE") : "-"}</div>
-                </div>
-            `);
-        }
-
-        function renderPhotos(photoItems) {
-            markerLayer.clearLayers();
-            markers = [];
-
-            if (heatLayer) {
-                map.removeLayer(heatLayer);
-                heatLayer = null;
-            }
-
-            if (mapMode === "heatmap") {
-                const heatData = photoItems.map((photo) => [photo.latitude, photo.longitude, 0.5]);
-                heatLayer = L.heatLayer(heatData, {
-                    radius: 22,
-                    blur: 16,
-                    maxZoom: 13,
-                }).addTo(map);
-            } else {
-                photoItems.forEach((photo) => {
-                    const marker = L.marker([photo.latitude, photo.longitude]).bindPopup(buildPopup(photo));
-                    markerLayer.addLayer(marker);
-                    markers.push(marker);
-                });
-            }
-
-            document.getElementById("photoCount").textContent = photos.length;
-            document.getElementById("visiblePhotoCount").textContent = photoItems.length;
-            renderPlaceOverlay();
-
-            if (!hasAutoFit && photoItems.length > 0) {
-                fitToPhotos();
-                hasAutoFit = true;
-            }
-        }
-
-        async function loadPhotos() {
-            try {
-                const response = await fetch(buildApiUrl());
-                const data = await response.json();
-                photos = data.photos;
-                applyPlaceFilter();
-            } catch (error) {
-                console.error("Fehler beim Laden der Fotos:", error);
-            }
-        }
-
-        function setMapMode(mode) {
-            mapMode = mode;
-            document.getElementById("markersModeBtn").classList.toggle("is-active", mode === "markers");
-            document.getElementById("markersModeBtn").classList.toggle("is-secondary", mode !== "markers");
-            document.getElementById("heatmapModeBtn").classList.toggle("is-active", mode === "heatmap");
-            document.getElementById("heatmapModeBtn").classList.toggle("is-secondary", mode !== "heatmap");
-            renderPhotos(filteredPhotos);
-        }
-
-        async function searchPlace() {
-            const place = document.getElementById("placeInput").value.trim();
-            if (!place) {
-                clearPlaceFilter();
-                return;
-            }
-            try {
-                const response = await fetch(`/api/geocode?q=${encodeURIComponent(place)}`);
-                const data = await response.json();
-                if (!data.results || data.results.length === 0) {
-                    alert("Ort nicht gefunden.");
-                    return;
-                }
-                const first = data.results[0];
-                activePlace = {
-                    name: first.display_name,
-                    lat: first.lat,
-                    lon: first.lon,
-                    radiusKm: getRadiusKm(),
-                };
-                map.setView([activePlace.lat, activePlace.lon], 11);
-                applyPlaceFilter();
-            } catch (error) {
-                console.error("Fehler bei der Ortssuche:", error);
-                alert("Ortssuche derzeit nicht verfügbar.");
-            }
-        }
-
-        function clearPlaceFilter() {
-            activePlace = null;
-            document.getElementById("placeInput").value = "";
-            applyPlaceFilter();
-        }
-
-        async function reverseGeocodeAt(lat, lon) {
-            try {
-                const response = await fetch(`/api/reverse-geocode?lat=${lat}&lon=${lon}`);
-                const data = await response.json();
-                const result = data.result;
-                activePlace = {
-                    name: result?.display_name || `${lat.toFixed(4)}, ${lon.toFixed(4)}`,
-                    lat,
-                    lon,
-                    radiusKm: getRadiusKm(),
-                };
-                document.getElementById("placeInput").value = activePlace.name;
-                applyPlaceFilter();
-            } catch (error) {
-                console.error("Fehler beim Reverse-Geocoding:", error);
-            }
-        }
-
-        function fitToPhotos() {
-            if (filteredPhotos.length === 0) {
-                alert("Keine Fotos mit GPS-Daten gefunden.");
-                return;
-            }
-
-            const fitMarkers = filteredPhotos.map((photo) => L.marker([photo.latitude, photo.longitude]));
-            const group = new L.featureGroup(fitMarkers);
-            map.fitBounds(group.getBounds(), { padding: [50, 50] });
-        }
-
-        map.on("click", async (event) => {
-            await reverseGeocodeAt(event.latlng.lat, event.latlng.lng);
+      } else {
+        photoItems.forEach((photo) => {
+          const marker = L.marker([photo.latitude, photo.longitude]).bindPopup(buildPopup(photo));
+          markerLayer.addLayer(marker);
+          markers.push(marker);
         });
+      }
 
-        document.getElementById("placeInput").addEventListener("keydown", (event) => {
-            if (event.key === "Enter") {
-                event.preventDefault();
-                searchPlace();
-            }
-        });
+      document.getElementById("photoCount").textContent = photos.length;
+      document.getElementById("visiblePhotoCount").textContent = photoItems.length;
+      renderPlaceOverlay();
 
-        // Lade Fotos beim Seitenladen
-        updateFilterSummary();
-        loadPhotos();
+      if (!hasAutoFit && photoItems.length > 0) {
+        fitToPhotos();
+        hasAutoFit = true;
+      }
+    }
 
-        // Auto-Refresh alle 30 Sekunden
-        setInterval(loadPhotos, 30000);
-    </script>
-</body>
-</html>
+    async function loadPhotos() {
+      try {
+        const response = await fetch(buildApiUrl());
+        const data = await response.json();
+        photos = data.photos;
+        applyPlaceFilter();
+      } catch (error) {
+        console.error("Fehler beim Laden der Fotos:", error);
+      }
+    }
+
+    function setMapMode(mode) {
+      mapMode = mode;
+      document.getElementById("markersModeBtn").classList.toggle("is-active", mode === "markers");
+      document.getElementById("markersModeBtn").classList.toggle("is-secondary", mode !== "markers");
+      document.getElementById("heatmapModeBtn").classList.toggle("is-active", mode === "heatmap");
+      document.getElementById("heatmapModeBtn").classList.toggle("is-secondary", mode !== "heatmap");
+      renderPhotos(filteredPhotos);
+    }
+
+    async function searchPlace() {
+      const place = document.getElementById("placeInput").value.trim();
+      if (!place) {
+        clearPlaceFilter();
+        return;
+      }
+      try {
+        const response = await fetch(`/api/geocode?q=${encodeURIComponent(place)}`);
+        const data = await response.json();
+        if (!data.results || data.results.length === 0) {
+          alert("Ort nicht gefunden.");
+          return;
+        }
+        const first = data.results[0];
+        activePlace = {
+          name: first.display_name,
+          lat: first.lat,
+          lon: first.lon,
+          radiusKm: getRadiusKm(),
+        };
+        map.setView([activePlace.lat, activePlace.lon], 11);
+        applyPlaceFilter();
+      } catch (error) {
+        console.error("Fehler bei der Ortssuche:", error);
+        alert("Ortssuche derzeit nicht verfügbar.");
+      }
+    }
+
+    function clearPlaceFilter() {
+      activePlace = null;
+      document.getElementById("placeInput").value = "";
+      applyPlaceFilter();
+    }
+
+    async function reverseGeocodeAt(lat, lon) {
+      try {
+        const response = await fetch(`/api/reverse-geocode?lat=${lat}&lon=${lon}`);
+        const data = await response.json();
+        const result = data.result;
+        activePlace = {
+          name: result?.display_name || `${lat.toFixed(4)}, ${lon.toFixed(4)}`,
+          lat,
+          lon,
+          radiusKm: getRadiusKm(),
+        };
+        document.getElementById("placeInput").value = activePlace.name;
+        applyPlaceFilter();
+      } catch (error) {
+        console.error("Fehler beim Reverse-Geocoding:", error);
+      }
+    }
+
+    function fitToPhotos() {
+      if (filteredPhotos.length === 0) {
+        alert("Keine Fotos mit GPS-Daten gefunden.");
+        return;
+      }
+
+      const fitMarkers = filteredPhotos.map((photo) => L.marker([photo.latitude, photo.longitude]));
+      const group = new L.featureGroup(fitMarkers);
+      map.fitBounds(group.getBounds(), { padding: [50, 50] });
+    }
+
+    map.on("click", async (event) => {
+      await reverseGeocodeAt(event.latlng.lat, event.latlng.lng);
+    });
+
+    document.getElementById("placeInput").addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        searchPlace();
+      }
+    });
+
+    updateFilterSummary();
+    loadPhotos();
+    setInterval(loadPhotos, 30000);
+  </script>
+{% endblock %}
 
