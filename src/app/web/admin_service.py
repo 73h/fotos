@@ -243,11 +243,13 @@ class AdminService:
                     f"Verarbeitet: {total_processed}, Duplikate: {total_duplicates}",
                 )
         else:
-            with ThreadPoolExecutor(max_workers=safe_workers) as executor:
+            executor = ThreadPoolExecutor(max_workers=safe_workers)
+            try:
                 futures = [executor.submit(prepare_record, record) for record in to_process]
                 for idx, future in enumerate(as_completed(futures)):
                     if job.should_abort():
                         job.message = "Abbruch angefordert"
+                        executor.shutdown(wait=False, cancel_futures=True)
                         return
 
                     result = future.result()
@@ -285,6 +287,8 @@ class AdminService:
                         job.total,
                         f"Verarbeitet: {total_processed}, Duplikate: {total_duplicates}",
                     )
+            finally:
+                executor.shutdown(wait=False)
 
         job.message = (
             f"✓ Abgeschlossen: {total_images} Dateien gescannt, "
@@ -381,11 +385,13 @@ class AdminService:
                     f"Verarbeitet: {processed}, mit Treffer: {matched}",
                 )
         else:
-            with ThreadPoolExecutor(max_workers=safe_workers) as executor:
+            executor = ThreadPoolExecutor(max_workers=safe_workers)
+            try:
                 futures = [executor.submit(_process, p) for p in existing]
                 for future in as_completed(futures):
                     if job.should_abort():
                         job.message = "Abbruch angefordert"
+                        executor.shutdown(wait=False, cancel_futures=True)
                         return
                     photo_path, matches, _ = future.result()
                     persist_matches_for_photo(db_path=db_path, photo_path=photo_path, matches=matches)
@@ -398,6 +404,8 @@ class AdminService:
                         job.total,
                         f"Verarbeitet: {processed}, mit Treffer: {matched}",
                     )
+            finally:
+                executor.shutdown(wait=False)
 
         job.message = f"✓ {processed} Fotos verarbeitet, {matched} mit Personen-Treffer"
 

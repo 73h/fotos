@@ -881,9 +881,30 @@ function collectAdminConfig() {
   };
 }
 
+function normalizePersonBackendForMainSelect(value) {
+  const text = String(value ?? '').trim().toLowerCase();
+  return text === '' || text === 'auto' ? '' : text;
+}
+
+function normalizePersonBackendForQualitySelect(value) {
+  const text = String(value ?? '').trim().toLowerCase();
+  return text === '' ? 'auto' : text;
+}
+
+function setPersonBackendControls(value) {
+  const mainSelect = document.getElementById('person-backend-select');
+  const qualitySelect = document.getElementById('person-backend-db-select');
+  if (mainSelect) {
+    mainSelect.value = normalizePersonBackendForMainSelect(value);
+  }
+  if (qualitySelect) {
+    qualitySelect.value = normalizePersonBackendForQualitySelect(value);
+  }
+}
+
 function applyAdminConfig(config) {
   document.getElementById('photo-roots-input').value = (config.photo_roots || []).join('\n');
-  document.getElementById('person-backend-select').value = config.person_backend || '';
+  setPersonBackendControls(config.person_backend);
   document.getElementById('force-reindex-check').checked = Boolean(config.force_reindex);
   document.getElementById('index-workers-select').value = String(config.index_workers || 1);
   document.getElementById('near-duplicates-check').checked = Boolean(config.near_duplicates);
@@ -899,6 +920,7 @@ async function loadAdminConfig() {
     }
     const config = await response.json();
     applyAdminConfig(config);
+    applyQualitySettings(config);
   } catch (err) {
     console.error('Fehler beim Laden der Admin-Konfiguration:', err);
   }
@@ -965,6 +987,13 @@ function setupConfigAutoSave() {
     el.addEventListener('input', scheduleAutoSave);
     el.addEventListener('change', scheduleAutoSave);
   });
+
+  const mainPersonBackend = document.getElementById('person-backend-select');
+  if (mainPersonBackend) {
+    mainPersonBackend.addEventListener('change', (event) => {
+      setPersonBackendControls(event.target.value);
+    });
+  }
 }
 
 function renderJobsList(jobs) {
@@ -1249,7 +1278,7 @@ function applyQualitySettings(config) {
   if (config.yolo_model) document.getElementById('yolo-model-input').value = config.yolo_model;
   if (config.yolo_confidence !== undefined) document.getElementById('yolo-confidence-input').value = config.yolo_confidence;
   if (config.yolo_device) document.getElementById('yolo-device-input').value = config.yolo_device;
-  if (config.person_backend) document.getElementById('person-backend-db-select').value = config.person_backend;
+  if (config.person_backend !== undefined) setPersonBackendControls(config.person_backend);
   if (config.person_threshold !== undefined) document.getElementById('person-threshold-input').value = config.person_threshold;
   if (config.person_top_k) document.getElementById('person-topk-input').value = config.person_top_k;
   if (config.person_full_image_fallback !== undefined) document.getElementById('person-fallback-check').checked = config.person_full_image_fallback;
@@ -1319,6 +1348,13 @@ function setupQualitySettingsAutoSave() {
       qualitySaveTimer = setTimeout(() => saveQualitySettings(false), 500);
     });
   });
+
+  const qualityPersonBackend = document.getElementById('person-backend-db-select');
+  if (qualityPersonBackend) {
+    qualityPersonBackend.addEventListener('change', (event) => {
+      setPersonBackendControls(event.target.value);
+    });
+  }
 }
 
 // Lade Konfiguration beim Start

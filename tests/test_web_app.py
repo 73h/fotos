@@ -48,6 +48,22 @@ class WebAppTests(unittest.TestCase):
                 "near_duplicates": True,
                 "phash_threshold": 8,
                 "rematch_workers": 4,
+                "yolo_model": "yolov8m.pt",
+                "yolo_confidence": 0.4,
+                "yolo_device": "cpu",
+                "person_threshold": 0.52,
+                "person_top_k": 5,
+                "person_full_image_fallback": False,
+                "insightface_model": "buffalo_s",
+                "insightface_ctx": -1,
+                "insightface_det_size": "1280,1280",
+                "timelapse_ai_backend": "onnx",
+                "timelapse_superres_model": "D:/models/superres.pb",
+                "timelapse_superres_name": "lapsrn",
+                "timelapse_superres_scale": 4,
+                "timelapse_face_onnx_model": "D:/models/face.onnx",
+                "timelapse_face_onnx_provider": "cuda",
+                "timelapse_face_onnx_size": 384,
             }
             save_response = client.post("/api/admin/config", json=save_payload)
             self.assertEqual(save_response.status_code, 200)
@@ -56,6 +72,22 @@ class WebAppTests(unittest.TestCase):
             self.assertEqual(saved["photo_roots"], [str(photos_dir)])
             self.assertEqual(saved["index_workers"], 10)
             self.assertEqual(saved["rematch_workers"], 4)
+            self.assertEqual(saved["yolo_model"], "yolov8m.pt")
+            self.assertAlmostEqual(float(saved["yolo_confidence"]), 0.4, places=6)
+            self.assertEqual(saved["yolo_device"], "cpu")
+            self.assertAlmostEqual(float(saved["person_threshold"]), 0.52, places=6)
+            self.assertEqual(int(saved["person_top_k"]), 5)
+            self.assertFalse(bool(saved["person_full_image_fallback"]))
+            self.assertEqual(saved["insightface_model"], "buffalo_s")
+            self.assertEqual(int(saved["insightface_ctx"]), -1)
+            self.assertEqual(saved["insightface_det_size"], "1280,1280")
+            self.assertEqual(saved["timelapse_ai_backend"], "onnx")
+            self.assertEqual(saved["timelapse_superres_model"], "D:/models/superres.pb")
+            self.assertEqual(saved["timelapse_superres_name"], "lapsrn")
+            self.assertEqual(int(saved["timelapse_superres_scale"]), 4)
+            self.assertEqual(saved["timelapse_face_onnx_model"], "D:/models/face.onnx")
+            self.assertEqual(saved["timelapse_face_onnx_provider"], "cuda")
+            self.assertEqual(int(saved["timelapse_face_onnx_size"]), 384)
 
             load_response = client.get("/api/admin/config")
             self.assertEqual(load_response.status_code, 200)
@@ -65,6 +97,27 @@ class WebAppTests(unittest.TestCase):
             self.assertTrue(loaded["force_reindex"])
             self.assertTrue(loaded["near_duplicates"])
             self.assertEqual(loaded["phash_threshold"], 8)
+            self.assertEqual(loaded["yolo_model"], "yolov8m.pt")
+            self.assertAlmostEqual(float(loaded["yolo_confidence"]), 0.4, places=6)
+            self.assertEqual(loaded["yolo_device"], "cpu")
+            self.assertAlmostEqual(float(loaded["person_threshold"]), 0.52, places=6)
+            self.assertEqual(int(loaded["person_top_k"]), 5)
+            self.assertFalse(bool(loaded["person_full_image_fallback"]))
+            self.assertEqual(loaded["insightface_model"], "buffalo_s")
+            self.assertEqual(int(loaded["insightface_ctx"]), -1)
+            self.assertEqual(loaded["insightface_det_size"], "1280,1280")
+            self.assertEqual(loaded["timelapse_ai_backend"], "onnx")
+            self.assertEqual(loaded["timelapse_superres_model"], "D:/models/superres.pb")
+            self.assertEqual(loaded["timelapse_superres_name"], "lapsrn")
+            self.assertEqual(int(loaded["timelapse_superres_scale"]), 4)
+            self.assertEqual(loaded["timelapse_face_onnx_model"], "D:/models/face.onnx")
+            self.assertEqual(loaded["timelapse_face_onnx_provider"], "cuda")
+            self.assertEqual(int(loaded["timelapse_face_onnx_size"]), 384)
+
+            admin_page_response = client.get("/admin")
+            self.assertEqual(admin_page_response.status_code, 200)
+            admin_html = admin_page_response.get_data(as_text=True)
+            self.assertIn("applyQualitySettings(config);", admin_html)
 
             start_response = client.post(
                 "/api/admin/config/start-index",
