@@ -1,11 +1,11 @@
-# 📸 Fotos - KI-basierte Fotoverwaltung
+# 📸 Fotos - Lokale KI-basierte Fotoverwaltung
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![Flask](https://img.shields.io/badge/Flask-2.0+-green.svg)](https://flask.palletsprojects.com/)
 [![SQLite](https://img.shields.io/badge/SQLite-3-lightblue.svg)](https://www.sqlite.org/)
 [![YOLO](https://img.shields.io/badge/YOLO-v8-red.svg)](https://github.com/ultralytics/yolov8)
 
-Intelligente Fotoverwaltungs-Anwendung mit fortgeschrittener KI-gestützter Bildanalyse, Personenerkennung und Duplikatverwaltung.
+Lokale Foto-Suchmaschine mit YOLO-Objekterkennung, InsightFace-Gesichtserkennung, Album-Management und KI-Timelapse.
 
 ## ✨ Features
 
@@ -102,26 +102,6 @@ python src/main.py --help
 
 ---
 
-## 📚 Dokumentation
-
-Die komplette Dokumentation befindet sich im [`docs/`](docs/) Ordner:
-
-### 🎯 Schnelleinstieg
-- **[Dokumentations-Index](docs/README.md)** - Haupt-Übersicht
-- **[Projekt-README](docs/general/PROJECT_README.md)** - Projekt-Details
-- **[Einstellungen](docs/general/SETTINGS.md)** - Alle Konfigurationsoptionen
-
-### 📦 Features
-- **[Settings Migration](docs/features/settings-migration/)** - ENV → SQLite Migration
-- **[Timelapse-Settings](docs/features/timelapse-settings/)** - KI-Timelapse Konfiguration
-- **[Admin-Redesign](docs/features/admin-redesign/)** - Modern UI Design
-
-### 🔧 Setup
-- **[GPU Setup](docs/setup/GPU_SETUP.md)** - Vollständige GPU-Konfiguration
-- **[GPU Quick Reference](docs/setup/GPU_QUICK_REFERENCE.md)** - GPU-Schnellstart
-- **[Local README](docs/general/LOCAL_README.md)** - Lokale Einrichtung
-
----
 
 ## 🎛️ Konfiguration
 
@@ -189,7 +169,6 @@ fotos/
 │   │   └── web/            (Flask UI, Admin)
 │   ├── main.py             (CLI)
 │   └── main_web.py         (Web-Server)
-├── docs/                    (📚 Dokumentation)
 └── data/
     └── photo_index.db      (SQLite)
 ```
@@ -234,8 +213,7 @@ fotos/
 
 ### GPU-Probleme
 ```bash
-python scripts/check_onnx_models.py  # Überprüfe ONNX
-./scripts/setup_gpu.ps1              # GPU neu einrichten
+python src/main.py doctor  # Diagnose aller Komponenten
 ```
 
 ### Performance
@@ -244,7 +222,7 @@ python scripts/check_onnx_models.py  # Überprüfe ONNX
 - YOLO-Modell verkleinern (yolov8n statt yolov8m)
 
 ### Fehler
-Siehe [Dokumentation](docs/) für häufige Probleme.
+Siehe GitHub Issues für bekannte Probleme.
 
 ---
 
@@ -258,15 +236,8 @@ Contributions sind willkommen! Bitte:
 
 ---
 
-## 📄 Lizenz
+## 🤝 Support
 
-MIT License - siehe [LICENSE](LICENSE) für Details
-
----
-
-## 📮 Support
-
-- 📚 [Dokumentation](docs/README.md)
 - 🐛 [Issues](https://github.com/yourusername/fotos/issues)
 - 💬 [Diskussionen](https://github.com/yourusername/fotos/discussions)
 
