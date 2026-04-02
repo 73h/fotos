@@ -477,7 +477,7 @@ def _safe_split_query(query: str) -> list[str]:
 class SearchFilterDict(TypedDict):
     month: int | None
     year: int | None
-    person: str | None
+    persons: list[str]
     smile_min: float | None
 
 
@@ -488,14 +488,14 @@ def parse_search_filters(query: str) -> tuple[list[str], SearchFilterDict]:
     Unterstuetzte Filter:
     - month:MM
     - year:YYYY
-    - person:<name> (auch person:"Vorname Nachname")
+    - person:<name> (auch person:"Vorname Nachname") – mehrfach fuer UND-Verknuepfung
     - smile:<threshold> (0..1 oder 0..100)
     """
     tokens = [term.strip() for term in _safe_split_query(query) if term.strip()]
 
     month_filter: int | None = None
     year_filter: int | None = None
-    person_filter: str | None = None
+    persons_filter: list[str] = []
     smile_min: float | None = None
     filtered_terms: list[str] = []
 
@@ -522,9 +522,9 @@ def parse_search_filters(query: str) -> tuple[list[str], SearchFilterDict]:
 
         if term.startswith("person:"):
             person_value = token[7:].strip()
-            if person_value:
-                person_filter = person_value
-                continue
+            if person_value and person_value.lower() not in [p.lower() for p in persons_filter]:
+                persons_filter.append(person_value)
+            continue
 
         if term.startswith("smile:"):
             raw = term[6:].strip()
@@ -544,7 +544,7 @@ def parse_search_filters(query: str) -> tuple[list[str], SearchFilterDict]:
     return filtered_terms, {
         "month": month_filter,
         "year": year_filter,
-        "person": person_filter,
+        "persons": persons_filter,
         "smile_min": smile_min,
     }
 
@@ -570,7 +570,7 @@ def search_photos_page(
     terms, filters = parse_search_filters(query)
     month_filter = filters["month"]
     year_filter = filters["year"]
-    person_filter = filters["person"]
+    persons_filter = filters["persons"]
     smile_min = filters["smile_min"]
 
     if (
@@ -578,7 +578,7 @@ def search_photos_page(
         and album_id is None
         and person_count is None
         and not (month_filter or year_filter)
-        and not person_filter
+        and not persons_filter
         and smile_min is None
     ):
         return [], 0
@@ -612,21 +612,8 @@ def search_photos_page(
                 "(taken_ts IS NULL AND strftime('%m', datetime(modified_ts, 'unixepoch')) = ?))"
             )
 
-    if person_filter is not None and smile_min is not None:
-        where_parts.append(
-            """
-            EXISTS (
-                SELECT 1
-                FROM photo_person_matches m
-                JOIN persons p ON p.id = m.person_id
-                WHERE m.photo_path = photos.path
-                  AND lower(p.name) = lower(?)
-                  AND m.smile_score IS NOT NULL
-                  AND m.smile_score >= ?
-            )
-            """
-        )
-    elif person_filter is not None:
+    # Pro Person ein eigenes EXISTS (UND-Verknuepfung)
+    for _person_name in persons_filter:
         where_parts.append(
             """
             EXISTS (
@@ -638,7 +625,9 @@ def search_photos_page(
             )
             """
         )
-    elif smile_min is not None:
+
+    # smile_min als separater globaler Filter (mindestens eine Person muss laecheln)
+    if smile_min is not None:
         where_parts.append(
             """
             EXISTS (
@@ -685,12 +674,11 @@ def search_photos_page(
         base_params.append(month_str)
         base_params.append(month_str)
 
-    if person_filter is not None and smile_min is not None:
-        base_params.append(person_filter)
-        base_params.append(smile_min)
-    elif person_filter is not None:
-        base_params.append(person_filter)
-    elif smile_min is not None:
+    # Person-Parameter: ein Wert pro Person-EXISTS
+    for person_name in persons_filter:
+        base_params.append(person_name)
+
+    if smile_min is not None:
         base_params.append(smile_min)
 
     if person_count is not None:

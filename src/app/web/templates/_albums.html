@@ -95,9 +95,57 @@
 
     <div class="timelapse-form-grid">
       <label>FPS <input type="number" id="timelapse-fps-input" value="24" min="5" max="60" /></label>
-      <label>Hold <input type="number" id="timelapse-hold-input" value="24" min="1" max="240" /></label>
-      <label>Morph <input type="number" id="timelapse-morph-input" value="48" min="1" max="480" /></label>
-      <label>Size <input type="number" id="timelapse-size-input" value="512" min="128" max="2048" step="64" /></label>
+      <label>Hold <input type="number" id="timelapse-hold-input" value="20" min="1" max="240" /></label>
+      <label>Morph <input type="number" id="timelapse-morph-input" value="80" min="1" max="480" /></label>
+      <label>Size <input type="number" id="timelapse-size-input" value="768" min="128" max="2048" step="64" /></label>
+      <label>
+        Quality
+        <select id="timelapse-quality-input">
+          <option value="compat">compat</option>
+          <option value="balanced">balanced</option>
+          <option value="max" selected>max</option>
+        </select>
+      </label>
+      <label>
+        Interpolator
+        <select id="timelapse-interpolator-input">
+          <option value="morph">morph</option>
+          <option value="flow" selected>flow</option>
+          <option value="auto">auto</option>
+        </select>
+      </label>
+      <label>Smooth <input type="number" id="timelapse-smooth-input" value="0.28" min="0" max="0.95" step="0.05" /></label>
+      <label>Detail <input type="number" id="timelapse-detail-input" value="0.38" min="0" max="1" step="0.05" /></label>
+      <label>
+        AI-Mode
+        <select id="timelapse-ai-mode-input">
+          <option value="off">off</option>
+          <option value="auto">auto</option>
+          <option value="max" selected>max</option>
+        </select>
+      </label>
+      <label>
+        AI-Backend
+        <select id="timelapse-ai-backend-input">
+          <option value="auto" selected>auto</option>
+          <option value="local">local</option>
+          <option value="onnx" {% if not timelapse_ai.onnx_available %}disabled{% endif %} {% if timelapse_ai.default_backend == 'onnx' %}selected{% endif %}>
+            onnx{% if not timelapse_ai.onnx_available %} (nicht verfuegbar){% endif %}
+          </option>
+          <option value="superres" {% if not timelapse_ai.superres_available %}disabled{% endif %} {% if timelapse_ai.default_backend == 'superres' %}selected{% endif %}>
+            superres{% if not timelapse_ai.superres_available %} (nicht verfuegbar){% endif %}
+          </option>
+        </select>
+      </label>
+      <label>AI-Strength <input type="number" id="timelapse-ai-strength-input" value="0.65" min="0" max="1" step="0.05" /></label>
+    </div>
+
+    <div class="timelapse-form-row">
+      <small id="timelapse-ai-hint">{{ timelapse_ai.hint }}</small>
+    </div>
+
+    <div class="timelapse-form-row">
+      <label><input type="checkbox" id="timelapse-enhance-input" checked /> Face-Enhancement aktivieren</label>
     </div>
 
     <div class="timelapse-actions">

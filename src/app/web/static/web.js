@@ -470,10 +470,118 @@
       holdInput: document.getElementById("timelapse-hold-input"),
       morphInput: document.getElementById("timelapse-morph-input"),
       sizeInput: document.getElementById("timelapse-size-input"),
+      qualityInput: document.getElementById("timelapse-quality-input"),
+      interpolatorInput: document.getElementById("timelapse-interpolator-input"),
+      smoothInput: document.getElementById("timelapse-smooth-input"),
+      detailInput: document.getElementById("timelapse-detail-input"),
+      enhanceInput: document.getElementById("timelapse-enhance-input"),
+      aiModeInput: document.getElementById("timelapse-ai-mode-input"),
+      aiBackendInput: document.getElementById("timelapse-ai-backend-input"),
+      aiStrengthInput: document.getElementById("timelapse-ai-strength-input"),
+      aiHint: document.getElementById("timelapse-ai-hint"),
       startBtn: document.getElementById("timelapse-start-btn"),
       statusBox: document.getElementById("timelapse-status"),
       downloadLink: document.getElementById("timelapse-download-link"),
     };
+  }
+
+  function normalizeTimelapseAiBackend(ui) {
+    if (!ui || !ui.aiBackendInput) {
+      return { backend: "auto", changed: false };
+    }
+
+    const select = ui.aiBackendInput;
+    const current = String(select.value || "auto").toLowerCase();
+    const currentOption = Array.from(select.options).find((opt) => String(opt.value).toLowerCase() === current);
+    if (currentOption && !currentOption.disabled) {
+      return { backend: current, changed: false };
+    }
+
+    const candidates = ["auto", "local"];
+    for (const candidate of candidates) {
+      const opt = Array.from(select.options).find((o) => String(o.value).toLowerCase() === candidate);
+      if (opt && !opt.disabled) {
+        select.value = candidate;
+        return { backend: candidate, changed: true };
+      }
+    }
+
+    const firstEnabled = Array.from(select.options).find((opt) => !opt.disabled);
+    if (firstEnabled) {
+      select.value = String(firstEnabled.value);
+      return { backend: String(firstEnabled.value).toLowerCase(), changed: true };
+    }
+
+    return { backend: "auto", changed: false };
+  }
+
+  function updateTimelapseAiHint() {
+    const ui = getTimelapseElements();
+    if (!ui || !ui.aiHint) {
+      return;
+    }
+
+    const mode = String(ui.aiModeInput ? ui.aiModeInput.value : "off").toLowerCase();
+    const normalized = normalizeTimelapseAiBackend(ui);
+    const backend = normalized.backend;
+    const strength = Number(ui.aiStrengthInput ? ui.aiStrengthInput.value : 0.5) || 0.5;
+    const fallbackNote = normalized.changed
+      ? " Auswahl wurde automatisch auf ein verfuegbares Backend zurueckgesetzt."
+      : "";
+
+    if (mode === "off") {
+      ui.aiHint.textContent = "AI ist deaktiviert. Es wird nur der klassische Renderpfad genutzt." + fallbackNote;
+      return;
+    }
+
+    const selectedOption = ui.aiBackendInput
+      ? ui.aiBackendInput.options[ui.aiBackendInput.selectedIndex]
+      : null;
+    const backendUnavailable = Boolean(selectedOption && selectedOption.disabled);
+
+    if (backendUnavailable) {
+      ui.aiHint.textContent = `Backend '${backend}' ist hier nicht verfuegbar. Nutze 'auto' oder 'local'.` + fallbackNote;
+      return;
+    }
+
+    if (backend === "onnx") {
+      ui.aiHint.textContent = `ONNX-Enhancement aktiv (Staerke ${strength.toFixed(2)}).` + fallbackNote;
+      return;
+    }
+
+    if (backend === "superres") {
+      ui.aiHint.textContent = `SuperRes aktiv (Staerke ${strength.toFixed(2)}).` + fallbackNote;
+      return;
+    }
+
+    if (backend === "local") {
+      ui.aiHint.textContent = `Lokales AI-Enhancement aktiv (Staerke ${strength.toFixed(2)}).` + fallbackNote;
+      return;
+    }
+
+    ui.aiHint.textContent = `Auto-Backend aktiv (Staerke ${strength.toFixed(2)}).` + fallbackNote;
+  }
+
+  function bindTimelapseAiHint() {
+    const ui = getTimelapseElements();
+    if (!ui || !ui.panel) {
+      return;
+    }
+
+    updateTimelapseAiHint();
+
+    if (ui.panel.dataset.aiHintBound === "1") {
+      return;
+    }
+    ui.panel.dataset.aiHintBound = "1";
+
+    [ui.aiModeInput, ui.aiBackendInput, ui.aiStrengthInput].forEach((el) => {
+      if (!el) {
+        return;
+      }
+      el.addEventListener("change", updateTimelapseAiHint);
+      el.addEventListener("input", updateTimelapseAiHint);
+    });
   }
 
   function setTimelapseStatus(text, isError = false) {
@@ -486,7 +594,7 @@
   }
 
   async function pollTimelapseStatus(statusUrl) {
-    const maxRounds = 180; // bis ca. 6 Minuten bei 2s Polling
+    const maxRounds = 360; // bis ca. 12 Minuten bei 2s Polling (längere Timeouts möglich)
     for (let i = 0; i < maxRounds; i++) {
       await new Promise((resolve) => window.setTimeout(resolve, 2000));
 
@@ -496,13 +604,15 @@
         throw new Error(payload.error || "Status konnte nicht geladen werden.");
       }
 
-      const step = Number(payload.step || 0);
+      // Unterstütze beide alte (step/total) und neue (current/total) Strukturen
+      const current = Number(payload.current || payload.step || 0);
       const total = Number(payload.total || 0);
-      const progress = total > 0 ? ` [${step}/${total}]` : "";
+      const percentage = Number(payload.percentage || 0);
+      const progress = percentage > 0 ? ` [${Math.round(percentage)}%]` : (total > 0 ? ` [${current}/${total}]` : "");
       const message = String(payload.message || "").trim();
       setTimelapseStatus((message || "Generierung laeuft...") + progress);
 
-      if (payload.status === "done") {
+      if (payload.status === "completed") {
         const ui = getTimelapseElements();
         if (ui && ui.downloadLink && payload.download_url) {
           ui.downloadLink.href = String(payload.download_url);
@@ -512,12 +622,12 @@
         return;
       }
 
-      if (payload.status === "error") {
-        throw new Error(payload.message || "Timelapse-Erstellung fehlgeschlagen.");
+      if (payload.status === "failed" || payload.status === "error") {
+        throw new Error(payload.error || payload.message || "Timelapse-Erstellung fehlgeschlagen.");
       }
     }
 
-    throw new Error("Timeout: Timelapse dauert laenger als erwartet.");
+    throw new Error("Timeout: Timelapse dauert laenger als erwartet (über 12 Minuten).");
   }
 
   async function startAlbumTimelapse() {
@@ -538,6 +648,14 @@
       hold: Number(ui.holdInput ? ui.holdInput.value : 24) || 24,
       morph: Number(ui.morphInput ? ui.morphInput.value : 48) || 48,
       size: Number(ui.sizeInput ? ui.sizeInput.value : 512) || 512,
+      quality: String(ui.qualityInput ? ui.qualityInput.value : "compat") || "compat",
+      interpolator: String(ui.interpolatorInput ? ui.interpolatorInput.value : "morph") || "morph",
+      temporal_smooth: Number(ui.smoothInput ? ui.smoothInput.value : 0) || 0,
+      detail_boost: Number(ui.detailInput ? ui.detailInput.value : 0) || 0,
+      enhance_faces: Boolean(ui.enhanceInput && ui.enhanceInput.checked),
+      ai_mode: String(ui.aiModeInput ? ui.aiModeInput.value : "off") || "off",
+      ai_backend: normalizeTimelapseAiBackend(ui).backend,
+      ai_strength: Number(ui.aiStrengthInput ? ui.aiStrengthInput.value : 0.5) || 0.5,
     };
 
     if (ui.startBtn) {
@@ -842,10 +960,12 @@
   document.addEventListener("DOMContentLoaded", () => {
     initAlbumDragDrop(document);
     bindSearchFormEnhancements();
+    bindTimelapseAiHint();
   });
   document.body.addEventListener("htmx:afterSwap", () => {
     initAlbumDragDrop(document);
     bindSearchFormEnhancements();
     updateSearchMenuLinks();
+    bindTimelapseAiHint();
   });
 })();

@@ -120,6 +120,53 @@ def _build_parser() -> argparse.ArgumentParser:
     timelapse_parser.add_argument("--person-backend", default=None,
                                   choices=["auto", "insightface", "histogram"],
                                   help="Embedding-Backend fuer Gesichtserkennung")
+    timelapse_parser.add_argument(
+        "--quality",
+        default="compat",
+        choices=["compat", "balanced", "max"],
+        help="Qualitaetsprofil (compat=altes Morphing, balanced=maximale Qualitaet pro Laufzeit, max=beste Qualitaet)",
+    )
+    timelapse_parser.add_argument(
+        "--interpolator",
+        default="morph",
+        choices=["morph", "flow", "auto"],
+        help="Uebergangsverfahren zwischen Fotos",
+    )
+    timelapse_parser.add_argument(
+        "--temporal-smooth",
+        type=float,
+        default=0.0,
+        help="Zeitliches Glattziehen von Frames (0..0.95)",
+    )
+    timelapse_parser.add_argument(
+        "--detail-boost",
+        type=float,
+        default=0.0,
+        help="Face-Detail-Boost fuer Enhancement (0..1)",
+    )
+    timelapse_parser.add_argument(
+        "--enhance-faces",
+        action="store_true",
+        help="Aktiviert lokales Face-Enhancement vor dem Rendern",
+    )
+    timelapse_parser.add_argument(
+        "--ai-mode",
+        default="off",
+        choices=["off", "auto", "max"],
+        help="Experimenteller KI-Hook fuer max-Profil",
+    )
+    timelapse_parser.add_argument(
+        "--ai-backend",
+        default="auto",
+        choices=["auto", "local", "onnx", "superres"],
+        help="Backend fuer KI-Hook (auto/local/onnx/superres)",
+    )
+    timelapse_parser.add_argument(
+        "--ai-strength",
+        type=float,
+        default=0.5,
+        help="Staerke des KI-Hooks (0..1)",
+    )
 
     rematch_parser = subparsers.add_parser(
         "rematch-persons",
@@ -396,6 +443,14 @@ def _album_timelapse_command(
     morph_frames: int,
     output_size: int,
     person_backend: str | None,
+    quality_profile: str,
+    interpolator: str,
+    temporal_smooth: float,
+    detail_boost: float,
+    enhance_faces: bool,
+    ai_mode: str,
+    ai_backend: str,
+    ai_strength: float,
 ) -> int:
     from .albums.timelapse import TimelapseConfig, generate_aging_timelapse
 
@@ -414,6 +469,14 @@ def _album_timelapse_command(
         hold_frames=hold_frames,
         morph_frames=morph_frames,
         output_size=output_size,
+        quality_profile=quality_profile,
+        interpolator=interpolator,
+        temporal_smooth=temporal_smooth,
+        detail_boost=detail_boost,
+        enhance_faces=enhance_faces,
+        ai_mode=ai_mode,
+        ai_backend=ai_backend,
+        ai_strength=ai_strength,
     )
 
     def _cb(step: int, total: int, msg: str) -> None:
@@ -596,6 +659,14 @@ def main() -> int:
             morph_frames=args.morph,
             output_size=args.size,
             person_backend=args.person_backend,
+            quality_profile=args.quality,
+            interpolator=args.interpolator,
+            temporal_smooth=args.temporal_smooth,
+            detail_boost=args.detail_boost,
+            enhance_faces=args.enhance_faces,
+            ai_mode=args.ai_mode,
+            ai_backend=args.ai_backend,
+            ai_strength=args.ai_strength,
         )
     if args.command == "update-exif":
         return _update_exif_command(

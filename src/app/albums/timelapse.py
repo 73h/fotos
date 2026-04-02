@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
 
@@ -37,6 +37,56 @@ class TimelapseConfig:
     """OpenCV VideoWriter-Codec-Tag."""
     min_face_score: float = 0.28
     """Mindest-Cosine-Ähnlichkeit zum Personen-Embedding; niedrigere Werte verwerfen."""
+    quality_profile: str = "compat"
+    """Qualitaetsprofil: compat | balanced | max."""
+    interpolator: str = "morph"
+    """Uebergangs-Engine: morph | flow | auto."""
+    temporal_smooth: float = 0.0
+    """Zeitliches Glattziehen von Frames (0..0.95)."""
+    detail_boost: float = 0.0
+    """Schaerfungsstaerke fuer Face-Enhancement (0..1)."""
+    enhance_faces: bool = False
+    """Aktiviert lokales Face-Enhancement vor dem Rendern."""
+    ai_mode: str = "off"
+    """Experimenteller KI-Hook: off | auto | max."""
+    ai_backend: str = "auto"
+    """Backend-Auswahl fuer KI-Hook: auto | local | onnx | superres."""
+    ai_strength: float = 0.5
+    """Staerke fuer den KI-Hook (0..1)."""
+
+
+def _clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
+
+
+def _resolve_config(cfg: TimelapseConfig) -> TimelapseConfig:
+    """Wendet Profil-Defaults an, ohne explizite Nutzerwerte zu ueberschreiben."""
+    profile = (cfg.quality_profile or "compat").strip().lower()
+    interpolator = (cfg.interpolator or "morph").strip().lower()
+    resolved = replace(cfg)
+    resolved.quality_profile = profile if profile in {"compat", "balanced", "max"} else "compat"
+    resolved.interpolator = interpolator if interpolator in {"morph", "flow", "auto"} else "morph"
+    resolved.temporal_smooth = float(_clamp(float(resolved.temporal_smooth), 0.0, 0.95))
+    resolved.detail_boost = float(_clamp(float(resolved.detail_boost), 0.0, 1.0))
+    resolved.ai_mode = (resolved.ai_mode or "off").strip().lower()
+    if resolved.ai_mode not in {"off", "auto", "max"}:
+        resolved.ai_mode = "off"
+    resolved.ai_backend = (resolved.ai_backend or "auto").strip().lower()
+    if resolved.ai_backend not in {"auto", "local", "onnx", "superres"}:
+        resolved.ai_backend = "auto"
+    resolved.ai_strength = float(_clamp(float(resolved.ai_strength), 0.0, 1.0))
+
+    if resolved.quality_profile == "balanced":
+        resolved.enhance_faces = cfg.enhance_faces or True
+        resolved.temporal_smooth = max(resolved.temporal_smooth, 0.12)
+        resolved.detail_boost = max(resolved.detail_boost, 0.18)
+    elif resolved.quality_profile == "max":
+        resolved.enhance_faces = cfg.enhance_faces or True
+        resolved.temporal_smooth = max(resolved.temporal_smooth, 0.25)
+        resolved.detail_boost = max(resolved.detail_boost, 0.32)
+        resolved.ai_strength = max(resolved.ai_strength, 0.45)
+
+    return resolved
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +265,31 @@ def _extract_face(
     return None
 
 
+def _enhance_face(frame: np.ndarray, detail_boost: float) -> np.ndarray:
+    """Leichtes Face-Enhancement (CLAHE + unsharp mask) fuer ruhigere Timelapse-Frames."""
+    try:
+        import cv2
+
+        amount = float(_clamp(detail_boost, 0.0, 1.0))
+        if amount <= 0:
+            return frame
+
+        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        clip = 2.0 + amount * 2.0
+        tile = 8 if amount < 0.5 else 6
+        clahe = cv2.createCLAHE(clipLimit=clip, tileGridSize=(tile, tile))
+        l2 = clahe.apply(l)
+        enhanced = cv2.cvtColor(cv2.merge([l2, a, b]), cv2.COLOR_LAB2BGR)
+
+        sigma = 1.0 + amount * 1.2
+        blurred = cv2.GaussianBlur(enhanced, (0, 0), sigmaX=sigma, sigmaY=sigma)
+        sharpened = cv2.addWeighted(enhanced, 1.0 + 0.45 * amount, blurred, -0.45 * amount, 0)
+        return sharpened
+    except Exception:
+        return frame
+
+
 # ---------------------------------------------------------------------------
 # Morphing
 # ---------------------------------------------------------------------------
@@ -302,6 +377,78 @@ def _morph_frame(
             ).clip(0, 255).astype(np.uint8)
 
 
+def _flow_transition_frames(img1: np.ndarray, img2: np.ndarray, steps: int) -> list[np.ndarray]:
+    """Erzeugt Zwischenframes per bidirektionalem Optical Flow."""
+    if steps <= 0:
+        return []
+    try:
+        import cv2
+
+        g1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
+        g2 = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
+
+        try:
+            # DIS ist meist stabiler und schneller als Farneback fuer diese Aufgabe.
+            dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_MEDIUM)
+            flow12 = dis.calc(g1, g2, None)
+            flow21 = dis.calc(g2, g1, None)
+        except Exception:
+            flow12 = cv2.calcOpticalFlowFarneback(g1, g2, None, 0.5, 3, 21, 5, 7, 1.5, 0)
+            flow21 = cv2.calcOpticalFlowFarneback(g2, g1, None, 0.5, 3, 21, 5, 7, 1.5, 0)
+
+        h, w = g1.shape
+        grid_x, grid_y = np.meshgrid(np.arange(w), np.arange(h))
+        grid_x = grid_x.astype(np.float32)
+        grid_y = grid_y.astype(np.float32)
+
+        frames: list[np.ndarray] = []
+        for j in range(steps):
+            alpha = (j + 1) / (steps + 1)
+            map12_x = grid_x - flow12[..., 0] * alpha
+            map12_y = grid_y - flow12[..., 1] * alpha
+            map21_x = grid_x - flow21[..., 0] * (1.0 - alpha)
+            map21_y = grid_y - flow21[..., 1] * (1.0 - alpha)
+
+            w1 = cv2.remap(img1, map12_x, map12_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+            w2 = cv2.remap(img2, map21_x, map21_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+            frames.append(
+                ((1.0 - alpha) * w1.astype(np.float32) + alpha * w2.astype(np.float32)).clip(0, 255).astype(np.uint8)
+            )
+        return frames
+    except Exception:
+        return []
+
+
+def _transition_frames(
+    img1: np.ndarray,
+    img2: np.ndarray,
+    kps: np.ndarray,
+    cfg: TimelapseConfig,
+) -> list[np.ndarray]:
+    if cfg.morph_frames <= 0:
+        return []
+
+    use_flow = cfg.interpolator == "flow" or cfg.interpolator == "auto"
+    if use_flow:
+        flow_frames = _flow_transition_frames(img1, img2, cfg.morph_frames)
+        if flow_frames:
+            return flow_frames
+
+    frames: list[np.ndarray] = []
+    for j in range(cfg.morph_frames):
+        alpha = (j + 1) / (cfg.morph_frames + 1)
+        frames.append(_morph_frame(img1, img2, kps, kps, alpha, cfg.output_size))
+    return frames
+
+
+def _smooth_temporal(current: np.ndarray, prev: np.ndarray | None, amount: float) -> np.ndarray:
+    if prev is None or amount <= 0:
+        return current
+    keep_prev = float(_clamp(amount, 0.0, 0.95))
+    out = keep_prev * prev.astype(np.float32) + (1.0 - keep_prev) * current.astype(np.float32)
+    return out.clip(0, 255).astype(np.uint8)
+
+
 # ---------------------------------------------------------------------------
 # Haupt-Einstiegspunkt
 # ---------------------------------------------------------------------------
@@ -339,7 +486,7 @@ def generate_aging_timelapse(
             "opencv-python ist erforderlich: pip install opencv-python"
         ) from exc
 
-    cfg = config or TimelapseConfig()
+    cfg = _resolve_config(config or TimelapseConfig())
 
     def _progress(step: int, total: int, msg: str) -> None:
         if progress_cb:
@@ -357,7 +504,7 @@ def generate_aging_timelapse(
     refs = _load_person_refs(db_path, person_name)
     mean_emb = _mean_embedding(refs)
 
-    _progress(0, len(photos), f"{len(photos)} Fotos gefunden – extrahiere Gesichter …")
+    _progress(0, len(photos), f"{len(photos)} Fotos gefunden – Profil '{cfg.quality_profile}', extrahiere Gesichter …")
 
     # 3. Gesichts-Crops extrahieren
     face_frames: list[np.ndarray] = []
@@ -368,6 +515,8 @@ def generate_aging_timelapse(
         if face is None:
             skipped += 1
             continue
+        if cfg.enhance_faces:
+            face = _enhance_face(face, cfg.detail_boost)
         face_frames.append(face)
 
     if len(face_frames) < 2:
@@ -376,6 +525,20 @@ def generate_aging_timelapse(
             "Für ein Timelapse werden mindestens 2 Aufnahmen benötigt.\n"
             "Tipp: Stelle sicher, dass InsightFace installiert ist "
             "(pip install insightface onnxruntime) für bessere Gesichtserkennung."
+        )
+
+    if cfg.quality_profile == "max" and cfg.ai_mode != "off":
+        from .timelapse_ai import enhance_sequence_with_ai
+
+        def _ai_progress(step: int, total: int, msg: str) -> None:
+            _progress(step, total, msg)
+
+        face_frames = enhance_sequence_with_ai(
+            face_frames,
+            ai_mode=cfg.ai_mode,
+            ai_backend=cfg.ai_backend,
+            ai_strength=cfg.ai_strength,
+            progress_cb=_ai_progress,
         )
 
     # Für aligned Faces sind die Keypoints im Template-Raum identisch
@@ -402,18 +565,20 @@ def generate_aging_timelapse(
     n = len(face_frames)
     total_frames = n * cfg.hold_frames + (n - 1) * cfg.morph_frames
 
+    prev_written: np.ndarray | None = None
     for i, face in enumerate(face_frames):
         # Originalfoto halten
         for _ in range(cfg.hold_frames):
-            writer.write(face)
+            out_frame = _smooth_temporal(face, prev_written, cfg.temporal_smooth)
+            writer.write(out_frame)
+            prev_written = out_frame
 
         if i < n - 1:
             next_face = face_frames[i + 1]
-            # Morphing-Übergang
-            for j in range(cfg.morph_frames):
-                alpha = (j + 1) / (cfg.morph_frames + 1)
-                morph = _morph_frame(face, next_face, aligned_kps, aligned_kps, alpha, cfg.output_size)
-                writer.write(morph)
+            for frame in _transition_frames(face, next_face, aligned_kps, cfg):
+                out_frame = _smooth_temporal(frame, prev_written, cfg.temporal_smooth)
+                writer.write(out_frame)
+                prev_written = out_frame
 
         frames_done = (i + 1) * cfg.hold_frames + i * cfg.morph_frames
         _progress(i + 1, n, f"Video: {frames_done}/{total_frames} Frames …")

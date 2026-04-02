@@ -715,6 +715,8 @@ class WebAppTests(unittest.TestCase):
             sidebar_html = sidebar_response.get_data(as_text=True)
             self.assertIn("Aging-Timelapse", sidebar_html)
             self.assertIn("timelapse-start-btn", sidebar_html)
+            self.assertIn("timelapse-ai-backend-input", sidebar_html)
+            self.assertIn("timelapse-ai-hint", sidebar_html)
 
             # Validierung: person fehlt
             bad_response = client.post(
@@ -738,6 +740,14 @@ class WebAppTests(unittest.TestCase):
 
             def _fake_generate(db_path, album_id, person_name, output_path, config, progress_cb):
                 self.assertFalse(output_path.exists(), "Alte MP4 sollte vor dem Rebuild gelöscht werden.")
+                self.assertEqual(config.quality_profile, "max")
+                self.assertEqual(config.interpolator, "flow")
+                self.assertAlmostEqual(float(config.temporal_smooth), 0.3, places=3)
+                self.assertAlmostEqual(float(config.detail_boost), 0.4, places=3)
+                self.assertTrue(config.enhance_faces)
+                self.assertEqual(config.ai_mode, "auto")
+                self.assertEqual(config.ai_backend, "onnx")
+                self.assertAlmostEqual(float(config.ai_strength), 0.7, places=3)
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 output_path.write_bytes(b"new-mp4")
                 if progress_cb:
@@ -752,7 +762,21 @@ class WebAppTests(unittest.TestCase):
             ):
                 start_response = client.post(
                     f"/api/albums/{album_id}/timelapse",
-                    json={"person": "Marie Curie", "fps": 24, "hold": 24, "morph": 48, "size": 512},
+                    json={
+                        "person": "Marie Curie",
+                        "fps": 24,
+                        "hold": 24,
+                        "morph": 48,
+                        "size": 512,
+                        "quality": "max",
+                        "interpolator": "flow",
+                        "temporal_smooth": 0.3,
+                        "detail_boost": 0.4,
+                        "enhance_faces": True,
+                        "ai_mode": "auto",
+                        "ai_backend": "onnx",
+                        "ai_strength": 0.7,
+                    },
                 )
 
             self.assertEqual(start_response.status_code, 202)

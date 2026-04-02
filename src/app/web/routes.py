@@ -2,6 +2,7 @@ import base64
 from functools import lru_cache
 import json
 import math
+import os
 import re
 import threading
 import uuid
@@ -33,12 +34,7 @@ from .thumbnails import ensure_thumbnail
 
 web_blueprint = Blueprint("web", __name__)
 
-# ---------------------------------------------------------------------------
-# Timelapse-Job-Verwaltung (einfacher In-Process-Status)
-# ---------------------------------------------------------------------------
-
-_timelapse_jobs: dict[str, dict] = {}
-_timelapse_lock = threading.Lock()
+# ...existing code...
 
 
 def _make_job_id(album_id: int, person_name: str) -> str:
@@ -59,6 +55,46 @@ def _decode_path(token: str) -> Path:
     return Path(decoded)
 
 
+def _build_timelapse_ai_context() -> dict[str, object]:
+    onnx_model_text = os.getenv("FOTOS_TIMELAPSE_FACE_ONNX_MODEL", "").strip()
+    superres_model_text = os.getenv("FOTOS_TIMELAPSE_SUPERRES_MODEL", "").strip()
+
+    onnx_model_ok = bool(onnx_model_text and Path(onnx_model_text).is_file())
+    superres_model_ok = bool(superres_model_text and Path(superres_model_text).is_file())
+
+    onnx_runtime_ok = False
+    try:
+        import onnxruntime  # noqa: F401
+        onnx_runtime_ok = True
+    except Exception:
+        onnx_runtime_ok = False
+
+    onnx_available = onnx_model_ok and onnx_runtime_ok
+    superres_available = superres_model_ok
+
+    default_backend = "auto"
+    if onnx_available:
+        default_backend = "onnx"
+    elif superres_available:
+        default_backend = "superres"
+
+    if onnx_available:
+        hint = "ONNX-Backend ist verfuegbar."
+    elif onnx_model_ok and not onnx_runtime_ok:
+        hint = "ONNX-Modell gefunden, aber onnxruntime fehlt."
+    elif not onnx_model_ok:
+        hint = "ONNX-Modell nicht konfiguriert (FOTOS_TIMELAPSE_FACE_ONNX_MODEL)."
+    else:
+        hint = "Lokales Backend aktiv."
+
+    return {
+        "onnx_available": onnx_available,
+        "superres_available": superres_available,
+        "default_backend": default_backend,
+        "hint": hint,
+    }
+
+
 def _build_photo_filter_clause(
     query: str,
     person_count: int | None = None,
@@ -68,25 +104,11 @@ def _build_photo_filter_clause(
     where_parts = ["search_blob LIKE ?" for _ in terms]
     params: list[object] = [f"%{term}%" for term in terms]
 
-    person_filter = filters["person"]
+    persons_filter = filters["persons"]
     smile_min = filters["smile_min"]
 
-    if person_filter is not None and smile_min is not None:
-        where_parts.append(
-            """
-            EXISTS (
-                SELECT 1
-                FROM photo_person_matches m
-                JOIN persons p ON p.id = m.person_id
-                WHERE m.photo_path = photos.path
-                  AND lower(p.name) = lower(?)
-                  AND m.smile_score IS NOT NULL
-                  AND m.smile_score >= ?
-            )
-            """
-        )
-        params.extend([person_filter, smile_min])
-    elif person_filter is not None:
+    # Pro Person ein eigenes EXISTS (UND-Verknuepfung)
+    for person_name in persons_filter:
         where_parts.append(
             """
             EXISTS (
@@ -98,8 +120,10 @@ def _build_photo_filter_clause(
             )
             """
         )
-        params.append(person_filter)
-    elif smile_min is not None:
+        params.append(person_name)
+
+    # smile_min als separater globaler Filter
+    if smile_min is not None:
         where_parts.append(
             """
             EXISTS (
@@ -226,6 +250,7 @@ def _build_album_payload(
             }
             for person in persons
         ],
+        "timelapse_ai": _build_timelapse_ai_context(),
     }
 
 
@@ -898,7 +923,7 @@ def api_album_export_download(token: str):
 @web_blueprint.post("/api/albums/<int:album_id>/timelapse")
 def api_album_timelapse(album_id: int):
     """
-    Startet die Timelapse-Generierung im Hintergrund.
+    Startet die Timelapse-Generierung im Hintergrund über JobManager.
 
     JSON-Body (alle optional außer person):
       { "person": "Marie", "fps": 24, "hold": 24, "morph": 48, "size": 512 }
@@ -907,6 +932,7 @@ def api_album_timelapse(album_id: int):
       202 { "job_id": "...", "status_url": "..." }   – Generierung läuft
     """
     from ..albums.timelapse import TimelapseConfig, generate_aging_timelapse
+    from .admin_jobs import get_job_manager
 
     db_path: Path = current_app.config["DB_PATH"]
     cache_dir: Path = current_app.config["CACHE_DIR"]
@@ -919,40 +945,64 @@ def api_album_timelapse(album_id: int):
     if not person_name:
         return jsonify({"error": "Feld 'person' fehlt"}), 400
 
-    fps   = int(body.get("fps",   24))
-    hold  = int(body.get("hold",  24))
+    fps = int(body.get("fps", 24))
+    hold = int(body.get("hold", 24))
     morph = int(body.get("morph", 48))
-    size  = int(body.get("size",  512))
+    size = int(body.get("size", 512))
+    quality = str(body.get("quality", "compat")).strip().lower() or "compat"
+    interpolator = str(body.get("interpolator", "morph")).strip().lower() or "morph"
+    temporal_smooth = float(body.get("temporal_smooth", 0.0))
+    detail_boost = float(body.get("detail_boost", 0.0))
+    enhance_faces = bool(body.get("enhance_faces", False))
+    ai_mode = str(body.get("ai_mode", "off")).strip().lower() or "off"
+    ai_backend = str(body.get("ai_backend", "auto")).strip().lower() or "auto"
+    ai_strength = float(body.get("ai_strength", 0.5))
 
-    job_id = _make_job_id(album_id, person_name)
+    job_id = f"timelapse_album_{album_id}_{uuid.uuid4().hex[:8]}"
     exports_dir = cache_dir / "exports"
-    output_path = exports_dir / f"{job_id}.mp4"
+    output_path = exports_dir / f"album_{album_id}_{_make_job_id(album_id, person_name)}.mp4"
 
-    with _timelapse_lock:
-        job = _timelapse_jobs.get(job_id)
-        if job and job["status"] == "running":
-            return jsonify({"job_id": job_id, "status": "running",
-                            "status_url": f"/api/albums/timelapse/status/{job_id}"}), 202
-        if job and job["status"] in {"done", "error"}:
-            _timelapse_jobs.pop(job_id, None)
+    # Neuen Job über JobManager starten
+    cfg = TimelapseConfig(
+        fps=fps,
+        hold_frames=hold,
+        morph_frames=morph,
+        output_size=size,
+        quality_profile=quality,
+        interpolator=interpolator,
+        temporal_smooth=temporal_smooth,
+        detail_boost=detail_boost,
+        enhance_faces=enhance_faces,
+        ai_mode=ai_mode,
+        ai_backend=ai_backend,
+        ai_strength=ai_strength,
+    )
 
-    if output_path.exists():
+    job_manager = get_job_manager()
+    job = job_manager.create_job(job_id, "timelapse", total=100)
+
+    def _run_timelapse(progress_job) -> None:
+        """Führt die Timelapse-Generierung in einem separaten Thread aus."""
         try:
-            output_path.unlink()
-        except OSError as error:
-            return jsonify({"error": f"Vorhandenes Video konnte nicht gelöscht werden: {error}"}), 500
+            # Setze initial Status
+            job_manager.update_progress(
+                progress_job.job_id,
+                1,
+                progress_job.total,
+                f"Starte Timelapse-Generierung für Person '{person_name}'...",
+            )
 
-    # Neuen Job starten
-    cfg = TimelapseConfig(fps=fps, hold_frames=hold, morph_frames=morph, output_size=size)
-
-    with _timelapse_lock:
-        _timelapse_jobs[job_id] = {"status": "running", "step": 0, "total": 0, "message": "Starte …"}
-
-    def _run() -> None:
-        try:
             def _cb(step: int, total: int, msg: str) -> None:
-                with _timelapse_lock:
-                    _timelapse_jobs[job_id].update({"step": step, "total": total, "message": msg})
+                # Normalisiere auf 1-100
+                pct = int(max(1, min(99, step * 99 // max(1, total))))
+                job_manager.update_progress(progress_job.job_id, pct, 100, msg)
+
+            # Lösche altes Video falls vorhanden
+            if output_path.exists():
+                try:
+                    output_path.unlink()
+                except OSError:
+                    pass
 
             count = generate_aging_timelapse(
                 db_path=db_path,
@@ -962,46 +1012,54 @@ def api_album_timelapse(album_id: int):
                 config=cfg,
                 progress_cb=_cb,
             )
-            with _timelapse_lock:
-                _timelapse_jobs[job_id].update({
-                    "status": "done",
-                    "count": count,
-                    "message": f"✓ {count} Fotos verarbeitet",
-                })
-        except Exception as exc:
-            with _timelapse_lock:
-                _timelapse_jobs[job_id].update({"status": "error", "message": str(exc)})
 
-    threading.Thread(target=_run, daemon=True).start()
-    return jsonify({"job_id": job_id, "status": "running",
-                    "status_url": f"/api/albums/timelapse/status/{job_id}"}), 202
+            # Markiere als abgeschlossen
+            msg = f"✓ Fertig – Timelapse mit {count} Fotos erstellt"
+            job_manager.set_job_completed(progress_job.job_id, msg)
+
+            # Speichere Video-Pfad im Job für Download-Link
+            progress_job.message = msg
+
+        except Exception as exc:
+            job_manager.set_job_failed(progress_job.job_id, str(exc))
+
+    job_manager.run_job_async(job.job_id, _run_timelapse)
+
+    return jsonify(
+        {
+            "job_id": job_id,
+            "status": "started",
+            "status_url": f"/api/admin/job/{job_id}",
+        }
+    ), 202
 
 
 @web_blueprint.get("/api/albums/timelapse/status/<job_id>")
 def api_timelapse_status(job_id: str):
-    """Gibt den aktuellen Status eines Timelapse-Jobs zurück."""
-    cache_dir: Path = current_app.config["CACHE_DIR"]
-    output_path = cache_dir / "exports" / f"{job_id}.mp4"
+    """
+    Gibt den Status eines Timelapse-Jobs zurück.
+    Leitet zum JobManager-Endpunkt um für konsistentes Job-Tracking.
+    """
+    from .admin_jobs import get_job_manager
 
-    with _timelapse_lock:
-        job = _timelapse_jobs.get(job_id)
+    job_manager = get_job_manager()
+    job = job_manager.get_job(job_id)
 
     if job is None:
-        if output_path.exists():
-            return jsonify(
-                {
-                    "status": "done",
-                    "step": 1,
-                    "total": 1,
-                    "message": "Video bereits vorhanden.",
-                    "download_url": f"/api/albums/timelapse/download/{job_id}",
-                }
-            )
         return jsonify({"error": "Job nicht gefunden"}), 404
 
-    response = dict(job)
-    if job["status"] == "done":
-        response["download_url"] = f"/api/albums/timelapse/download/{job_id}"
+    response = job.to_dict()
+
+    # Wenn fertig, füge Download-Link hinzu
+    if job.status.value == "completed":
+        cache_dir: Path = current_app.config["CACHE_DIR"]
+        exports_dir = cache_dir / "exports"
+        # Suche nach dem Video-File basierend auf job_id
+        for video_file in exports_dir.glob("album_*.mp4"):
+            if job_id in str(video_file) or video_file.name.startswith(job_id):
+                response["download_url"] = f"/api/albums/timelapse/download/{_encode_path(str(video_file))}"
+                break
+
     return jsonify(response)
 
 
@@ -1009,7 +1067,29 @@ def api_timelapse_status(job_id: str):
 def api_timelapse_download(job_id: str):
     """Lädt das fertige Timelapse-Video herunter."""
     cache_dir: Path = current_app.config["CACHE_DIR"]
-    output_path = cache_dir / "exports" / f"{job_id}.mp4"
+    exports_dir = cache_dir / "exports"
+    
+    # Versuche, das Video zu finden
+    # Erst probieren wir den direkten Pfad (falls job_id ein encoded path ist)
+    try:
+        output_path = _decode_path(job_id).resolve()
+    except (ValueError, AttributeError):
+        # Fallback: Suche nach einem Video, das job_id im Namen hat
+        output_path = None
+        for video_file in exports_dir.glob("album_*.mp4"):
+            if job_id in str(video_file) or video_file.name.startswith(job_id):
+                output_path = video_file
+                break
+        
+        if output_path is None:
+            return jsonify({"error": "Video nicht gefunden"}), 404
+
+    # Validiere, dass die Datei in exports_dir liegt
+    try:
+        if exports_dir not in output_path.parents and output_path.parent != exports_dir:
+            return jsonify({"error": "Ungültige Datei-Location"}), 403
+    except Exception:
+        return jsonify({"error": "Ungültige Datei-Location"}), 403
 
     if not output_path.exists():
         return jsonify({"error": "Video nicht gefunden – zuerst generieren"}), 404
@@ -1018,7 +1098,7 @@ def api_timelapse_download(job_id: str):
         output_path,
         mimetype="video/mp4",
         as_attachment=True,
-        download_name=f"{job_id}.mp4",
+        download_name=output_path.name,
     )
 
 
