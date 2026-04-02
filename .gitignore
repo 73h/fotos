@@ -141,6 +141,9 @@ models/
 models_cache/
 .cache/
 
+# YOLOv8 / PyTorch model weights (downloaded automatically by Ultralytics)
+*.pt
+
 # Temp files
 tmp/
 temp/
