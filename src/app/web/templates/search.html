@@ -85,19 +85,6 @@
         </form>
       </div>
 
-    {% if active_album_name %}
-    <div class="active-filter-bar">
-      Albumfilter aktiv: <strong>{{ active_album_name }}</strong>
-      <a
-        class="clear-filter-link"
-        href="{{ url_for('web.home', q=query, per_page=per_page, person_count=person_count) }}"
-      >
-        Filter entfernen
-      </a>
-    </div>
-    {% endif %}
-
-
       <section id="results" class="results-shell">
         {% include '_results.html' %}
       </section>

@@ -939,6 +939,28 @@
   window.deleteAlbumPrompt = deleteAlbumPrompt;
   window.duplicateAlbumPrompt = duplicateAlbumPrompt;
   window.trainReferenceAlbumPrompt = trainReferenceAlbumPrompt;
+  function togglePanel(panelEl) {
+    if (!panelEl) return;
+    const isCollapsed = panelEl.dataset.collapsed === 'true';
+    panelEl.dataset.collapsed = isCollapsed ? 'false' : 'true';
+    const key = panelEl.dataset.panelKey;
+    if (key) {
+      try { localStorage.setItem('panel_' + key, panelEl.dataset.collapsed); } catch (_) {}
+    }
+  }
+
+  function initCollapsiblePanels(root) {
+    (root || document).querySelectorAll('.panel-collapsible[data-panel-key]').forEach(panel => {
+      const key = panel.dataset.panelKey;
+      try {
+        const saved = localStorage.getItem('panel_' + key);
+        if (saved !== null) {
+          panel.dataset.collapsed = saved;
+        }
+      } catch (_) {}
+    });
+  }
+
   window.toggleAlbumMenu = toggleAlbumMenu;
   window.removePhotoFromAlbum = removePhotoFromAlbum;
   window.filterByPerson = filterByPerson;
@@ -1345,16 +1367,19 @@
   window.rematchPhotoPersons = rematchPhotoPersons;
   window.showPersonBestRef = showPersonBestRef;
   window.toggleMenu = toggleMenu;
+  window.togglePanel = togglePanel;
 
   document.addEventListener("DOMContentLoaded", () => {
     initAlbumDragDrop(document);
     bindSearchFormEnhancements();
     bindTimelapseAiHint();
+    initCollapsiblePanels(document);
   });
   document.body.addEventListener("htmx:afterSwap", () => {
     initAlbumDragDrop(document);
     bindSearchFormEnhancements();
     updateSearchMenuLinks();
     bindTimelapseAiHint();
+    initCollapsiblePanels(document);
   });
 })();

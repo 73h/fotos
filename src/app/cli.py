@@ -16,6 +16,7 @@ from .index.store import (
     sha1_of_file,
     upsert_photo,
     update_exif_only,
+    update_person_labels,
 )
 from .ingest import scan_images
 from .persons.service import (
@@ -586,8 +587,14 @@ def _rematch_persons_command(
     if safe_workers == 1:
         progress = tqdm(existing, desc="Rematch", unit="Foto")
         for photo_path in progress:
-            _, matches, _ = _process(photo_path)
+            _, matches, person_count = _process(photo_path)
             persist_matches_for_photo(db_path=db_path, photo_path=photo_path, matches=matches)
+            update_person_labels(
+                db_path=db_path,
+                photo_path=str(photo_path),
+                person_matches=matches,
+                person_count=person_count,
+            )
             processed += 1
             if matches:
                 matched += 1
@@ -596,8 +603,14 @@ def _rematch_persons_command(
             futures = [executor.submit(_process, p) for p in existing]
             progress = tqdm(as_completed(futures), total=len(futures), desc="Rematch", unit="Foto")
             for future in progress:
-                photo_path, matches, _ = future.result()
+                photo_path, matches, person_count = future.result()
                 persist_matches_for_photo(db_path=db_path, photo_path=photo_path, matches=matches)
+                update_person_labels(
+                    db_path=db_path,
+                    photo_path=str(photo_path),
+                    person_matches=matches,
+                    person_count=person_count,
+                )
                 processed += 1
                 if matches:
                     matched += 1

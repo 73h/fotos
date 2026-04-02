@@ -18,6 +18,7 @@ from ..index.store import (
     resolve_duplicate_marker,
     sha1_of_file,
     update_exif_only,
+    update_person_labels,
     upsert_photo,
 )
 from ..ingest import scan_images
@@ -373,8 +374,14 @@ class AdminService:
                 if job.should_abort():
                     job.message = "Abbruch angefordert"
                     return
-                _, matches, _ = _process(photo_path)
+                _, matches, person_count = _process(photo_path)
                 persist_matches_for_photo(db_path=db_path, photo_path=photo_path, matches=matches)
+                update_person_labels(
+                    db_path=db_path,
+                    photo_path=str(photo_path),
+                    person_matches=matches,
+                    person_count=person_count,
+                )
                 processed += 1
                 if matches:
                     matched += 1
@@ -393,8 +400,14 @@ class AdminService:
                         job.message = "Abbruch angefordert"
                         executor.shutdown(wait=False, cancel_futures=True)
                         return
-                    photo_path, matches, _ = future.result()
+                    photo_path, matches, person_count = future.result()
                     persist_matches_for_photo(db_path=db_path, photo_path=photo_path, matches=matches)
+                    update_person_labels(
+                        db_path=db_path,
+                        photo_path=str(photo_path),
+                        person_matches=matches,
+                        person_count=person_count,
+                    )
                     processed += 1
                     if matches:
                         matched += 1

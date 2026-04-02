@@ -26,7 +26,7 @@ from ..albums.store import (
     set_album_cover,
 )
 from ..albums.export import export_album_zip, parse_ratio
-from ..index.store import ensure_schema, get_admin_config, parse_search_filters, save_admin_config
+from ..index.store import ensure_schema, get_admin_config, parse_search_filters, save_admin_config, update_person_labels
 from ..persons import list_persons
 from ..persons.ranking import select_aging_timelapse_photo_paths
 from ..persons.embeddings import cosine_similarity
@@ -1098,12 +1098,12 @@ def api_rematch_photo_persons(token: str):
             preferred_backend=preferred_backend,
         )
         persist_matches_for_photo(db_path=db_path, photo_path=path, matches=matches)
-
-        with sqlite3.connect(db_path) as conn:
-            conn.execute(
-                "UPDATE photos SET person_count = ? WHERE path = ?",
-                (person_count, str(path)),
-            )
+        update_person_labels(
+            db_path=db_path,
+            photo_path=str(path),
+            person_matches=matches,
+            person_count=person_count,
+        )
     except Exception as error:
         return jsonify({"error": f"person rematch failed: {error}"}), 500
 

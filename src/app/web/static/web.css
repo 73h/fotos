@@ -528,6 +528,7 @@ body {
 }
 
 .timelapse-form-row input,
+.timelapse-form-row select,
 .timelapse-form-grid input,
 .timelapse-form-grid select {
   width: 100%;
@@ -1240,6 +1241,7 @@ option {
 .album-create-form button,
 #target-album-select,
 .timelapse-form-row input:not([type="checkbox"]),
+.timelapse-form-row select,
 .timelapse-form-grid input:not([type="checkbox"]),
 .timelapse-form-grid select {
   min-height: 42px;
@@ -1257,6 +1259,7 @@ option {
 .album-create-form input:focus,
 #target-album-select:focus,
 .timelapse-form-row input:not([type="checkbox"]):focus,
+.timelapse-form-row select:focus,
 .timelapse-form-grid input:not([type="checkbox"]):focus,
 .timelapse-form-grid select:focus {
   outline: none;
@@ -1709,4 +1712,38 @@ option {
   }
 }
 
+/* ===== Collapsible Panels ===== */
+.panel-toggle-header {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 0;
+  user-select: none;
+}
 
+.panel-collapsible[data-collapsed="false"] .panel-toggle-header,
+.panel-collapsible:not([data-collapsed]) .panel-toggle-header {
+  margin-bottom: 8px;
+}
+
+.panel-toggle-arrow {
+  font-size: 11px;
+  color: var(--color-orange-light);
+  opacity: 0.7;
+  transition: transform 0.22s ease;
+  flex-shrink: 0;
+}
+
+.panel-collapsible[data-collapsed="true"] .panel-toggle-arrow {
+  transform: rotate(-90deg);
+}
+
+.panel-body {
+  overflow: hidden;
+}
+
+.panel-collapsible[data-collapsed="true"] .panel-body {
+  display: none;
+}

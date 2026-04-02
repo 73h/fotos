@@ -974,3 +974,69 @@ def search_photos_by_location(
     
     return items, len(items)
 
+
+def update_person_labels(
+    db_path: Path,
+    photo_path: str,
+    person_matches: list,  # list[PersonMatch] – Typ-Import vermeiden
+    person_count: int,
+) -> None:
+    """
+    Aktualisiert ``photos.person_count``, ``photos.labels_json`` und
+    ``photos.search_blob`` nach einem Personen-Rematch.
+
+    Die bisherigen Labels bleiben erhalten; nur ``person`` und
+    ``person:<name>``-Labels werden durch die neuen Match-Ergebnisse
+    ersetzt.
+    """
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT path, labels_json FROM photos WHERE path = ?",
+            (photo_path,),
+        ).fetchone()
+
+    if row is None:
+        return
+
+    raw_path, labels_json_str = row
+    try:
+        existing_labels: list[str] = json.loads(labels_json_str) if labels_json_str else []
+    except (json.JSONDecodeError, TypeError):
+        existing_labels = []
+
+    # Entferne alte Personen-Labels
+    non_person_labels = [
+        lbl for lbl in existing_labels
+        if lbl != "person" and not lbl.startswith("person:")
+    ]
+
+    # Füge neue Personen-Labels hinzu
+    new_person_labels: list[str] = []
+    if person_matches:
+        new_person_labels.append("person")
+        for match in person_matches:
+            new_person_labels.append(f"person:{match.person_name.lower()}")
+
+    merged_labels = sorted(set(non_person_labels + new_person_labels))
+
+    from pathlib import Path as _Path
+    p = _Path(raw_path)
+    new_search_blob = " ".join(
+        [p.as_posix().lower(), p.stem.lower(), " ".join(merged_labels)]
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE photos
+            SET person_count = ?,
+                labels_json   = ?,
+                search_blob   = ?
+            WHERE path = ?
+            """,
+            (person_count, json.dumps(merged_labels), new_search_blob, photo_path),
+        )
+
+
+
+

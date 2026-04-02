@@ -74,8 +74,11 @@
   <p class="album-empty">Noch keine Alben vorhanden.</p>
   {% endif %}
 
-  <div class="timelapse-panel" data-aging-album-panel="1">
-    <h3>Aging-Best-of Album</h3>
+  <div class="timelapse-panel panel-collapsible" data-aging-album-panel="1" data-panel-key="aging-album" data-collapsed="true">
+    <h3 class="panel-toggle-header" onclick="togglePanel(this.closest('.panel-collapsible'))">
+      Aging-Best-of Album <span class="panel-toggle-arrow">▾</span>
+    </h3>
+    <div class="panel-body">
     <p>Waehlt automatisch die besten Bilder einer Person fuer Aging-Timelapse aus.</p>
 
     <div class="timelapse-form-row">
@@ -123,11 +126,15 @@
     </div>
 
     <div id="aging-album-status" class="timelapse-status">Bereit.</div>
+    </div>
   </div>
 
   {% if active_album_id %}
-  <div class="timelapse-panel" data-timelapse-panel="1" data-album-id="{{ active_album_id }}">
-    <h3>Aging-Timelapse</h3>
+  <div class="timelapse-panel panel-collapsible" data-timelapse-panel="1" data-album-id="{{ active_album_id }}" data-panel-key="aging-timelapse" data-collapsed="true">
+    <h3 class="panel-toggle-header" onclick="togglePanel(this.closest('.panel-collapsible'))">
+      Aging-Timelapse <span class="panel-toggle-arrow">▾</span>
+    </h3>
+    <div class="panel-body">
     <p>Film für eine Person im aktiven Album erzeugen.</p>
 
     <div class="timelapse-form-row">
@@ -205,10 +212,14 @@
     </div>
 
     <div id="timelapse-status" class="timelapse-status">Bereit.</div>
+    </div>
   </div>
 
-  <div class="album-export-panel" data-album-export-panel="1" data-album-id="{{ active_album_id }}">
-    <h3>Album-Export (ZIP)</h3>
+  <div class="album-export-panel panel-collapsible" data-album-export-panel="1" data-album-id="{{ active_album_id }}" data-panel-key="album-export" data-collapsed="true">
+    <h3 class="panel-toggle-header" onclick="togglePanel(this.closest('.panel-collapsible'))">
+      Album-Export (ZIP) <span class="panel-toggle-arrow">▾</span>
+    </h3>
+    <div class="panel-body">
     <p>Alle Bilder als ZIP exportieren. Optional auf eine Person zentriert zuschneiden.</p>
 
     <div class="timelapse-form-row">
@@ -243,6 +254,7 @@
     </div>
 
     <div id="album-export-status" class="timelapse-status">Bereit.</div>
+    </div>
   </div>
   {% endif %}
 </section>
