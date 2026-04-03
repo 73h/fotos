@@ -1315,6 +1315,8 @@ class WebAppTests(unittest.TestCase):
                     json={
                         "ratio": "1:1",
                         "add_metadata_overlay": True,
+                        "metadata_include_date": False,
+                        "metadata_include_place": True,
                         "metadata_overlay_exact_5pct": False,
                     },
                 )
@@ -1322,6 +1324,8 @@ class WebAppTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             mocked_export.assert_called_once()
             call_kwargs = mocked_export.call_args.kwargs
+            self.assertFalse(bool(call_kwargs["metadata_include_date"]))
+            self.assertTrue(bool(call_kwargs["metadata_include_place"]))
             self.assertFalse(bool(call_kwargs["metadata_overlay_exact_5pct"]))
 
     def test_photo_details_include_full_exif_elements_and_person_mark_can_be_removed(self) -> None:

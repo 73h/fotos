@@ -900,6 +900,8 @@
       statusBox: document.getElementById("album-export-status"),
       downloadLink: document.getElementById("album-export-download-link"),
       metadataInput: document.getElementById("album-export-metadata-input"),
+      metadataDateInput: document.getElementById("album-export-metadata-date-input"),
+      metadataPlaceInput: document.getElementById("album-export-metadata-place-input"),
       metadataExactInput: document.getElementById("album-export-metadata-exact-input"),
     };
   }
@@ -919,10 +921,20 @@
       return;
     }
 
+    const addMetadataOverlay = Boolean(ui.metadataInput && ui.metadataInput.checked);
+    const includeDate = Boolean(!ui.metadataDateInput || ui.metadataDateInput.checked);
+    const includePlace = Boolean(!ui.metadataPlaceInput || ui.metadataPlaceInput.checked);
+    if (addMetadataOverlay && !includeDate && !includePlace) {
+      setAlbumExportStatus("Bitte mindestens Datum oder Ort für die Überlagerung auswählen.", true);
+      return;
+    }
+
     const payload = {
       person: ui.personInput ? ui.personInput.value.trim() : "",
       ratio: ui.ratioSelect ? ui.ratioSelect.value : "1:1",
-      add_metadata_overlay: Boolean(ui.metadataInput && ui.metadataInput.checked),
+      add_metadata_overlay: addMetadataOverlay,
+      metadata_include_date: includeDate,
+      metadata_include_place: includePlace,
       metadata_overlay_exact_5pct: Boolean(!ui.metadataExactInput || ui.metadataExactInput.checked),
     };
 

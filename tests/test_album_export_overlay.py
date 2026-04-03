@@ -15,7 +15,7 @@ class AlbumExportOverlayTests(unittest.TestCase):
     def test_fit_overlay_font_aims_for_target_text_height(self) -> None:
         image = Image.new("RGB", (1200, 800), color=(120, 120, 120))
         draw = ImageDraw.Draw(image)
-        target_height = int(round(image.height * 0.05))
+        target_height = int(round(image.height * 0.02))
 
         text = "Muenchen, 03.04.2026"
         font = _fit_overlay_font(draw, text, target_height)
@@ -38,9 +38,20 @@ class AlbumExportOverlayTests(unittest.TestCase):
         changed_height = bbox[3] - bbox[1]
 
         self.assertGreater(bbox[0], int(result.width * 0.45))
-        self.assertGreater(bbox[1], int(result.height * 0.75))
-        self.assertGreaterEqual(changed_height, int(round(result.height * 0.05)) - 2)
+        self.assertGreater(bbox[1], int(result.height * 0.80))
+        self.assertGreaterEqual(changed_height, int(round(result.height * 0.02)) - 2)
         self.assertGreater(changed_width, int(result.width * 0.1))
+
+    def test_draw_metadata_overlay_supports_date_only_or_place_only(self) -> None:
+        base = Image.new("RGB", (1200, 800), color=(200, 200, 200))
+
+        date_only = _draw_metadata_overlay(base.copy(), "03.04.2026", None)
+        place_only = _draw_metadata_overlay(base.copy(), None, "Muenchen")
+        none_selected = _draw_metadata_overlay(base.copy(), None, None)
+
+        self.assertIsNotNone(ImageChops.difference(base, date_only).convert("L").getbbox())
+        self.assertIsNotNone(ImageChops.difference(base, place_only).convert("L").getbbox())
+        self.assertIsNone(ImageChops.difference(base, none_selected).convert("L").getbbox())
 
     def test_visual_comparison_exact_mode_is_closer_to_target_height(self) -> None:
         target_image = Image.new("RGB", (1200, 800), color=(180, 180, 180))

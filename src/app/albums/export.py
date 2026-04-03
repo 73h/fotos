@@ -395,7 +395,7 @@ def _fit_overlay_font(draw: ImageDraw.ImageDraw, text: str, target_text_height: 
 
 def _draw_metadata_overlay(
     image: Image.Image,
-    date_text: str,
+    date_text: str | None,
     place_text: str | None,
     *,
     exact_text_height: bool = True,
@@ -405,14 +405,17 @@ def _draw_metadata_overlay(
         draw = ImageDraw.Draw(image)
         width, height = image.size
 
-        # Format: "Ort, Datum" oder nur "Datum"
+        parts: list[str] = []
         if place_text:
-            overlay_text = f"{place_text}, {date_text}"
-        else:
-            overlay_text = date_text
+            parts.append(str(place_text).strip())
+        if date_text:
+            parts.append(str(date_text).strip())
+        overlay_text = ", ".join(part for part in parts if part)
+        if not overlay_text:
+            return image
 
-        # Ziel: reale Text-Hoehe soll 5% der finalen Bildhoehe sein.
-        target_text_height = max(int(round(height * 0.05)), 12)
+        # Ziel: reale Text-Hoehe soll 2% der finalen Bildhoehe sein.
+        target_text_height = max(int(round(height * 0.02)), 8)
         if exact_text_height:
             font = _fit_overlay_font(draw, overlay_text, target_text_height)
         else:
@@ -420,13 +423,12 @@ def _draw_metadata_overlay(
 
         text_width, text_height = _text_size(draw, overlay_text, font)
 
-        padding = max(4, int(height * 0.01))
-        text_width += padding
-        text_height += padding
-        x = width - text_width - padding
-        y = height - text_height - padding
-        x = max(padding, x)
-        y = max(padding, y)
+        pad_x = max(2, int(round(width * 0.03)))
+        pad_y = max(2, int(round(height * 0.03)))
+        x = width - text_width - pad_x
+        y = height - text_height - pad_y
+        x = max(pad_x, x)
+        y = max(pad_y, y)
 
         sample_region = image.crop((x, y, min(x + text_width, width), min(y + text_height, height)))
         avg_color = sample_region.convert("L").getextrema()
@@ -455,6 +457,8 @@ def export_album_zip(
     person_name: str | None = None,
     add_metadata_overlay: bool = False,
     metadata_overlay_exact_5pct: bool = True,
+    metadata_include_date: bool = True,
+    metadata_include_place: bool = True,
 ) -> AlbumZipExportResult:
     ensure_schema(db_path)
     ratio_w, ratio_h = parse_ratio(ratio_text)
@@ -497,13 +501,14 @@ def export_album_zip(
                     )
 
                     # Optionales Metadaten-Overlay
-                    if add_metadata_overlay:
+                    if add_metadata_overlay and (metadata_include_date or metadata_include_place):
                         metadata = _get_image_metadata(db_path, photo_path)
-                        if metadata.get("date"):
-                            place_text = metadata.get("place")
+                        date_text = str(metadata.get("date") or "").strip() if metadata_include_date else None
+                        place_text = str(metadata.get("place") or "").strip() if metadata_include_place else None
+                        if date_text or place_text:
                             cropped = _draw_metadata_overlay(
                                 cropped,
-                                str(metadata["date"]),
+                                date_text,
                                 place_text,
                                 exact_text_height=metadata_overlay_exact_5pct,
                             )
