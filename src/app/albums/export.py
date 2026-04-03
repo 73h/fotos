@@ -341,20 +341,23 @@ def _get_image_metadata(db_path: Path, photo_path: Path) -> dict[str, str | None
 
 
 def _draw_metadata_overlay(image: Image.Image, date_text: str, place_text: str | None) -> Image.Image:
-    """Zeichnet Datum + Ort rechts unten auf das Bild mit dynamischem Kontrasting."""
+    """Zeichnet Ort, Datum rechts unten auf das Bild mit dynamischem Kontrasting."""
     try:
         draw = ImageDraw.Draw(image)
         width, height = image.size
 
-        font_size = max(8, int(height / 60))
+        # Schriftgröße: 5% der Bildhöhe
+        font_size = max(int(height * 0.05), 12)
         try:
             font = ImageFont.load_default()
         except Exception:
             font = ImageFont.load_default()
 
-        overlay_text = date_text
+        # Format: "Ort, Datum" oder nur "Datum"
         if place_text:
-            overlay_text += f"\n{place_text}"
+            overlay_text = f"{place_text}, {date_text}"
+        else:
+            overlay_text = date_text
 
         bbox = draw.textbbox((0, 0), overlay_text, font=font)
         text_width = bbox[2] - bbox[0] + 4
