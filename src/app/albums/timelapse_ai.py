@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import os
 from pathlib import Path
 from typing import Callable, Protocol
 
@@ -158,8 +157,9 @@ class DnnSuperResEnhancer:
         return out
 
 
-def _resolve_superres_enhancer() -> TimelapseEnhancer | None:
-    model_text = os.getenv("FOTOS_TIMELAPSE_SUPERRES_MODEL", "").strip()
+def _resolve_superres_enhancer(config: dict[str, object] | None = None) -> TimelapseEnhancer | None:
+    cfg = config or {}
+    model_text = str(cfg.get("timelapse_superres_model", "") or "").strip()
     if not model_text:
         return None
 
@@ -167,8 +167,8 @@ def _resolve_superres_enhancer() -> TimelapseEnhancer | None:
     if not model_path.exists() or not model_path.is_file():
         return None
 
-    model_name = os.getenv("FOTOS_TIMELAPSE_SUPERRES_NAME", "espcn").strip().lower() or "espcn"
-    scale_text = os.getenv("FOTOS_TIMELAPSE_SUPERRES_SCALE", "2").strip() or "2"
+    model_name = str(cfg.get("timelapse_superres_name", "espcn") or "espcn").strip().lower() or "espcn"
+    scale_text = str(cfg.get("timelapse_superres_scale", "2") or "2").strip() or "2"
     try:
         scale = int(scale_text)
     except ValueError:
@@ -249,8 +249,9 @@ def _can_use_onnxruntime() -> bool:
         return False
 
 
-def _resolve_onnx_enhancer() -> TimelapseEnhancer | None:
-    model_text = os.getenv("FOTOS_TIMELAPSE_FACE_ONNX_MODEL", "").strip()
+def _resolve_onnx_enhancer(config: dict[str, object] | None = None) -> TimelapseEnhancer | None:
+    cfg = config or {}
+    model_text = str(cfg.get("timelapse_face_onnx_model", "") or "").strip()
     if not model_text:
         return None
 
@@ -260,8 +261,8 @@ def _resolve_onnx_enhancer() -> TimelapseEnhancer | None:
     if not _can_use_onnxruntime():
         return None
 
-    provider = os.getenv("FOTOS_TIMELAPSE_FACE_ONNX_PROVIDER", "auto").strip().lower() or "auto"
-    size_text = os.getenv("FOTOS_TIMELAPSE_FACE_ONNX_SIZE", "256").strip() or "256"
+    provider = str(cfg.get("timelapse_face_onnx_provider", "auto") or "auto").strip().lower() or "auto"
+    size_text = str(cfg.get("timelapse_face_onnx_size", "256") or "256").strip() or "256"
     try:
         input_size = int(size_text)
     except ValueError:
@@ -269,7 +270,11 @@ def _resolve_onnx_enhancer() -> TimelapseEnhancer | None:
     return OnnxFaceEnhancer(model_path=model_path, provider=provider, input_size=input_size)
 
 
-def resolve_enhancer(ai_mode: str, ai_backend: str = "auto") -> TimelapseEnhancer:
+def resolve_enhancer(
+    ai_mode: str,
+    ai_backend: str = "auto",
+    config: dict[str, object] | None = None,
+) -> TimelapseEnhancer:
     mode = (ai_mode or "off").strip().lower()
     if mode == "off":
         return NoopEnhancer("off")
@@ -280,10 +285,16 @@ def resolve_enhancer(ai_mode: str, ai_backend: str = "auto") -> TimelapseEnhance
         return NoopEnhancer("opencv fehlt")
 
     if mode in {"auto", "max"}:
-        backend = (ai_backend or os.getenv("FOTOS_TIMELAPSE_AI_BACKEND", "auto")).strip().lower() or "auto"
+        cfg = config or {}
+        backend = (
+            (ai_backend or str(cfg.get("timelapse_ai_backend", "auto") or "auto"))
+            .strip()
+            .lower()
+            or "auto"
+        )
         local = LocalAIMaxEnhancer()
-        onnx = _resolve_onnx_enhancer()
-        superres = _resolve_superres_enhancer()
+        onnx = _resolve_onnx_enhancer(cfg)
+        superres = _resolve_superres_enhancer(cfg)
 
         if backend == "local":
             return local
@@ -312,8 +323,9 @@ def enhance_sequence_with_ai(
     ai_backend: str,
     ai_strength: float,
     progress_cb: Callable[[int, int, str], None] | None = None,
+    config: dict[str, object] | None = None,
 ) -> list[np.ndarray]:
-    enhancer = resolve_enhancer(ai_mode, ai_backend=ai_backend)
+    enhancer = resolve_enhancer(ai_mode, ai_backend=ai_backend, config=config)
     try:
         return enhancer.enhance_sequence(frames, ai_strength, progress_cb=progress_cb)
     except Exception:

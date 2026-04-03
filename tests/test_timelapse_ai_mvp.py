@@ -1,5 +1,4 @@
 import sys
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -49,51 +48,48 @@ class TimelapseAIMvpTests(unittest.TestCase):
         self.assertTrue(np.array_equal(out[0], frames[0]))
 
     def test_resolve_enhancer_auto_defaults_to_local(self) -> None:
-        with patch.dict(os.environ, {}, clear=True):
-            enhancer = resolve_enhancer("auto", ai_backend="auto")
+        enhancer = resolve_enhancer("auto", ai_backend="auto", config={})
         self.assertIsInstance(enhancer, LocalAIMaxEnhancer)
 
     def test_resolve_enhancer_superres_without_valid_model_falls_back_to_local(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             invalid_path = str(Path(tmp_dir) / "missing.onnx")
-            with patch.dict(
-                os.environ,
-                {
-                    "FOTOS_TIMELAPSE_AI_BACKEND": "superres",
-                    "FOTOS_TIMELAPSE_SUPERRES_MODEL": invalid_path,
+            enhancer = resolve_enhancer(
+                "max",
+                ai_backend="superres",
+                config={
+                    "timelapse_ai_backend": "superres",
+                    "timelapse_superres_model": invalid_path,
                 },
-                clear=True,
-            ):
-                enhancer = resolve_enhancer("max", ai_backend="superres")
+            )
         self.assertIsInstance(enhancer, LocalAIMaxEnhancer)
 
     def test_resolve_enhancer_auto_with_model_uses_composite(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             model_path = Path(tmp_dir) / "dummy.onnx"
             model_path.write_bytes(b"not-a-real-model")
-            with patch.dict(
-                os.environ,
-                {
-                    "FOTOS_TIMELAPSE_AI_BACKEND": "auto",
-                    "FOTOS_TIMELAPSE_SUPERRES_MODEL": str(model_path),
+            enhancer = resolve_enhancer(
+                "auto",
+                ai_backend="auto",
+                config={
+                    "timelapse_ai_backend": "auto",
+                    "timelapse_superres_model": str(model_path),
                 },
-                clear=True,
-            ):
-                enhancer = resolve_enhancer("auto", ai_backend="auto")
+            )
         self.assertIsInstance(enhancer, CompositeEnhancer)
 
     def test_resolve_enhancer_onnx_with_model_and_runtime_uses_onnx_backend(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             model_path = Path(tmp_dir) / "face_enhance.onnx"
             model_path.write_bytes(b"fake-onnx")
-            with patch.dict(
-                os.environ,
-                {
-                    "FOTOS_TIMELAPSE_FACE_ONNX_MODEL": str(model_path),
-                },
-                clear=True,
-            ), patch("src.app.albums.timelapse_ai._can_use_onnxruntime", return_value=True):
-                enhancer = resolve_enhancer("max", ai_backend="onnx")
+            with patch("src.app.albums.timelapse_ai._can_use_onnxruntime", return_value=True):
+                enhancer = resolve_enhancer(
+                    "max",
+                    ai_backend="onnx",
+                    config={
+                        "timelapse_face_onnx_model": str(model_path),
+                    },
+                )
         self.assertIsInstance(enhancer, OnnxFaceEnhancer)
 
 

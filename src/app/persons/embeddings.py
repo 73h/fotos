@@ -15,46 +15,42 @@ from PIL import Image
 _INSIGHTFACE_MODEL = None
 _INSIGHTFACE_CTX = None
 _INSIGHTFACE_DET_SIZE = None
+_PERSON_BACKEND = None
 
 
-def _load_insightface_settings_from_db(db_path: Path | None = None) -> tuple[str, int, str]:
-    """Lädt InsightFace-Einstellungen aus der Datenbank oder ENV-Variablen."""
-    global _INSIGHTFACE_MODEL, _INSIGHTFACE_CTX, _INSIGHTFACE_DET_SIZE
+def _load_insightface_settings_from_db(db_path: Path | None = None) -> tuple[str, int, str, str]:
+    """Lädt InsightFace-Einstellungen aus der Datenbank."""
+    global _INSIGHTFACE_MODEL, _INSIGHTFACE_CTX, _INSIGHTFACE_DET_SIZE, _PERSON_BACKEND
 
     model = "buffalo_l"
     ctx = 0
     det_size = "640,640"
+    person_backend = "auto"
 
     # Versuche aus DB zu laden
     if db_path and db_path.exists():
         try:
             from ..index.store import get_admin_config
             config = get_admin_config(db_path)
-            model = str(config.get("insightface_model", model))
-            ctx = int(config.get("insightface_ctx", ctx))
+            model = str(config.get("insightface_model", model) or model)
+            ctx = int(str(config.get("insightface_ctx", ctx)))
             det_size = str(config.get("insightface_det_size", det_size))
+            person_backend = str(config.get("person_backend", person_backend)).strip().lower() or "auto"
         except Exception:
             pass
-
-    # ENV-Variablen überschreiben (für Fallback/Kompabilität)
-    model = os.getenv("FOTOS_INSIGHTFACE_MODEL", model)
-    try:
-        ctx = int(os.getenv("FOTOS_INSIGHTFACE_CTX", str(ctx)))
-    except ValueError:
-        pass
-    det_size = os.getenv("FOTOS_INSIGHTFACE_DET_SIZE", det_size)
 
     _INSIGHTFACE_MODEL = model
     _INSIGHTFACE_CTX = ctx
     _INSIGHTFACE_DET_SIZE = det_size
+    _PERSON_BACKEND = person_backend if person_backend in {"auto", "insightface", "histogram"} else "auto"
 
-    return _INSIGHTFACE_MODEL, _INSIGHTFACE_CTX, _INSIGHTFACE_DET_SIZE
+    return _INSIGHTFACE_MODEL, _INSIGHTFACE_CTX, _INSIGHTFACE_DET_SIZE, _PERSON_BACKEND
 
 
 def initialize_insightface_settings(db_path: Path | None = None) -> None:
     """Initialisiert InsightFace-Einstellungen zu Startup (kann aus DB geladen werden)."""
-    global _INSIGHTFACE_MODEL, _INSIGHTFACE_CTX, _INSIGHTFACE_DET_SIZE
-    _INSIGHTFACE_MODEL, _INSIGHTFACE_CTX, _INSIGHTFACE_DET_SIZE = _load_insightface_settings_from_db(db_path)
+    global _INSIGHTFACE_MODEL, _INSIGHTFACE_CTX, _INSIGHTFACE_DET_SIZE, _PERSON_BACKEND
+    _INSIGHTFACE_MODEL, _INSIGHTFACE_CTX, _INSIGHTFACE_DET_SIZE, _PERSON_BACKEND = _load_insightface_settings_from_db(db_path)
 
 
 def _normalize_vector(values: np.ndarray) -> np.ndarray:
@@ -184,8 +180,6 @@ class InsightFaceBackend(EmbeddingBackend):
 
 def _configure_inference_logging() -> None:
     # Unterdrueckt laute Bibliotheksausgaben, Fortschritt bleibt ueber tqdm sichtbar.
-    if os.getenv("FOTOS_QUIET_INFERENCE", "1") != "1":
-        return
     logging.getLogger("insightface").setLevel(logging.ERROR)
     logging.getLogger("onnxruntime").setLevel(logging.ERROR)
     os.environ.setdefault("ORT_LOG_SEVERITY_LEVEL", "4")
@@ -193,8 +187,6 @@ def _configure_inference_logging() -> None:
 
 
 def _run_quietly(factory):
-    if os.getenv("FOTOS_QUIET_INFERENCE", "1") != "1":
-        return factory()
     with open(os.devnull, "w", encoding="ascii") as devnull:
         with redirect_stdout(devnull), redirect_stderr(devnull):
             return factory()
@@ -243,9 +235,11 @@ def _resolve_backend_cached(
 
 
 def resolve_backend(preferred_backend: str | None = None, strict: bool = False) -> EmbeddingBackend:
-    global _INSIGHTFACE_MODEL, _INSIGHTFACE_CTX, _INSIGHTFACE_DET_SIZE
+    global _INSIGHTFACE_MODEL, _INSIGHTFACE_CTX, _INSIGHTFACE_DET_SIZE, _PERSON_BACKEND
 
-    backend_name = (preferred_backend or os.getenv("FOTOS_PERSON_BACKEND", "auto")).strip().lower()
+    if _PERSON_BACKEND is None:
+        _PERSON_BACKEND = "auto"
+    backend_name = (preferred_backend or _PERSON_BACKEND).strip().lower()
 
     if _INSIGHTFACE_MODEL is None:
         _INSIGHTFACE_MODEL = "buffalo_l"

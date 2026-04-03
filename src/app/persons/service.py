@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,7 +26,7 @@ _USE_FULL_IMAGE_FALLBACK = None
 
 
 def _load_person_settings_from_db(db_path: Path | None = None) -> tuple[float, int, bool]:
-    """Lädt Personen-Einstellungen aus der Datenbank oder ENV-Variablen."""
+    """Lädt Personen-Einstellungen aus der Datenbank."""
     global _PERSON_THRESHOLD, _PERSON_TOP_K, _USE_FULL_IMAGE_FALLBACK
 
     threshold = 0.38
@@ -39,24 +38,12 @@ def _load_person_settings_from_db(db_path: Path | None = None) -> tuple[float, i
         try:
             from ..index.store import get_admin_config
             config = get_admin_config(db_path)
-            threshold = float(config.get("person_threshold", threshold))
-            top_k = int(config.get("person_top_k", top_k))
+            threshold = float(str(config.get("person_threshold", threshold)))
+            top_k = int(str(config.get("person_top_k", top_k)))
             use_fallback = bool(config.get("person_full_image_fallback", use_fallback))
         except Exception:
             pass
 
-    # ENV-Variablen überschreiben (für Fallback/Kompabilität)
-    try:
-        threshold = float(os.getenv("FOTOS_PERSON_THRESHOLD", str(threshold)))
-    except ValueError:
-        pass
-
-    try:
-        top_k = int(os.getenv("FOTOS_PERSON_TOP_K", str(top_k)))
-    except ValueError:
-        pass
-
-    use_fallback = os.getenv("FOTOS_PERSON_FULL_IMAGE_FALLBACK", "1") == "1"
 
     _PERSON_THRESHOLD = threshold
     _PERSON_TOP_K = top_k

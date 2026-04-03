@@ -529,6 +529,9 @@ def generate_aging_timelapse(
 
     if cfg.quality_profile == "max" and cfg.ai_mode != "off":
         from .timelapse_ai import enhance_sequence_with_ai
+        from ..index.store import get_admin_config
+
+        admin_config = get_admin_config(db_path)
 
         def _ai_progress(step: int, total: int, msg: str) -> None:
             _progress(step, total, msg)
@@ -539,6 +542,7 @@ def generate_aging_timelapse(
             ai_backend=cfg.ai_backend,
             ai_strength=cfg.ai_strength,
             progress_cb=_ai_progress,
+            config=admin_config,
         )
 
     # Für aligned Faces sind die Keypoints im Template-Raum identisch

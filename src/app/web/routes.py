@@ -26,6 +26,7 @@ from ..albums.store import (
     set_album_cover,
 )
 from ..albums.export import export_album_zip, parse_ratio
+
 from ..index.store import ADMIN_REMATCH_ORDER_MODES, ensure_schema, get_admin_config, parse_search_filters, save_admin_config, update_person_labels
 from ..persons import list_persons
 from ..persons.ranking import select_aging_timelapse_photo_paths
@@ -59,8 +60,11 @@ def _decode_path(token: str) -> Path:
 
 
 def _build_timelapse_ai_context() -> dict[str, object]:
-    onnx_model_text = os.getenv("FOTOS_TIMELAPSE_FACE_ONNX_MODEL", "").strip()
-    superres_model_text = os.getenv("FOTOS_TIMELAPSE_SUPERRES_MODEL", "").strip()
+    db_path: Path = current_app.config["DB_PATH"]
+    config = get_admin_config(db_path)
+
+    onnx_model_text = str(config.get("timelapse_face_onnx_model", "") or "").strip()
+    superres_model_text = str(config.get("timelapse_superres_model", "") or "").strip()
 
     onnx_model_ok = bool(onnx_model_text and Path(onnx_model_text).is_file())
     superres_model_ok = bool(superres_model_text and Path(superres_model_text).is_file())
@@ -75,18 +79,22 @@ def _build_timelapse_ai_context() -> dict[str, object]:
     onnx_available = onnx_model_ok and onnx_runtime_ok
     superres_available = superres_model_ok
 
-    default_backend = "auto"
-    if onnx_available:
-        default_backend = "onnx"
-    elif superres_available:
-        default_backend = "superres"
+    configured_backend = str(config.get("timelapse_ai_backend", "auto") or "auto").strip().lower() or "auto"
+    if configured_backend not in {"auto", "local", "onnx", "superres"}:
+        configured_backend = "auto"
+
+    default_backend = configured_backend
+    if configured_backend == "onnx" and not onnx_available:
+        default_backend = "superres" if superres_available else "auto"
+    elif configured_backend == "superres" and not superres_available:
+        default_backend = "onnx" if onnx_available else "auto"
 
     if onnx_available:
         hint = "ONNX-Backend ist verfuegbar."
     elif onnx_model_ok and not onnx_runtime_ok:
         hint = "ONNX-Modell gefunden, aber onnxruntime fehlt."
     elif not onnx_model_ok:
-        hint = "ONNX-Modell nicht konfiguriert (FOTOS_TIMELAPSE_FACE_ONNX_MODEL)."
+        hint = "ONNX-Modell nicht in Admin-Konfiguration gesetzt."
     else:
         hint = "Lokales Backend aktiv."
 
@@ -1282,6 +1290,8 @@ def _start_album_timelapse_job(
     if not person_name:
         raise ValueError("Feld 'person' fehlt")
 
+    admin_config = get_admin_config(db_path)
+
     fps = int(body.get("fps", 24))
     hold = int(body.get("hold", 24))
     morph = int(body.get("morph", 48))
@@ -1292,7 +1302,7 @@ def _start_album_timelapse_job(
     detail_boost = float(body.get("detail_boost", 0.0))
     enhance_faces = bool(body.get("enhance_faces", False))
     ai_mode = str(body.get("ai_mode", "off")).strip().lower() or "off"
-    ai_backend = str(body.get("ai_backend", "auto")).strip().lower() or "auto"
+    ai_backend = str(body.get("ai_backend", admin_config.get("timelapse_ai_backend", "auto"))).strip().lower() or "auto"
     ai_strength = float(body.get("ai_strength", 0.5))
 
     safe_job_id = str(job_id or f"timelapse_album_{album_id}_{uuid.uuid4().hex[:8]}")

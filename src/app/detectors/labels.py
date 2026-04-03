@@ -1,5 +1,4 @@
 from functools import lru_cache
-import os
 from pathlib import Path
 
 try:
@@ -15,7 +14,7 @@ _YOLO_DEVICE = None
 
 
 def _load_yolo_settings_from_db(db_path: Path | None = None) -> tuple[str, float, str]:
-    """Lädt YOLO-Einstellungen aus der Datenbank oder ENV-Variablen."""
+    """Lädt YOLO-Einstellungen aus der Datenbank."""
     global _YOLO_MODEL_NAME, _YOLO_CONFIDENCE, _YOLO_DEVICE
 
     model = "yolov8n.pt"
@@ -28,21 +27,11 @@ def _load_yolo_settings_from_db(db_path: Path | None = None) -> tuple[str, float
             from ..index.store import get_admin_config
             config = get_admin_config(db_path)
             model = str(config.get("yolo_model", model))
-            confidence = float(config.get("yolo_confidence", confidence))
+            confidence = float(str(config.get("yolo_confidence", confidence)))
             device_value = config.get("yolo_device", "0")
             device = str(device_value) if device_value else "auto"
         except Exception:
             pass
-
-    # ENV-Variablen überschreiben (für Fallback/Kompabilität)
-    model = os.getenv("FOTOS_YOLO_MODEL", model)
-    try:
-        confidence = float(os.getenv("FOTOS_YOLO_CONF", str(confidence)))
-    except ValueError:
-        pass
-    device_env = os.getenv("FOTOS_YOLO_DEVICE", "").strip().lower()
-    if device_env and device_env != "auto":
-        device = device_env
 
     _YOLO_MODEL_NAME = model
     _YOLO_CONFIDENCE = confidence

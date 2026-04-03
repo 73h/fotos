@@ -1,12 +1,13 @@
 """Diagnose-Tools fuer das Foto-MVP."""
 
-import os
 import sys
+from pathlib import Path
 
 import torch
 
 from .detectors import labels as yolo_labels
 from .persons.embeddings import resolve_backend
+from .index.store import get_admin_config
 
 
 def _check_python() -> dict:
@@ -29,19 +30,19 @@ def _check_gpu() -> dict:
     }
 
 
-def _check_yolo() -> dict:
+def _check_yolo(config: dict[str, object]) -> dict:
     model = yolo_labels._load_model()
     available = model is not None
-    model_name = os.getenv("FOTOS_YOLO_MODEL", "yolov8n.pt")
+    model_name = str(config.get("yolo_model", "yolov8n.pt"))
     return {
         "available": available,
         "model_name": model_name,
-        "confidence_threshold": float(os.getenv("FOTOS_YOLO_CONF", "0.25")),
+        "confidence_threshold": float(str(config.get("yolo_confidence", 0.25))),
     }
 
 
-def _check_person_backend() -> dict:
-    preferred = os.getenv("FOTOS_PERSON_BACKEND", "auto")
+def _check_person_backend(config: dict[str, object]) -> dict:
+    preferred = str(config.get("person_backend", "auto"))
     try:
         backend = resolve_backend(preferred)
         return {
@@ -57,7 +58,7 @@ def _check_person_backend() -> dict:
         }
 
 
-def run_doctor() -> int:
+def run_doctor(db_path: Path | None = None) -> int:
     print("=" * 60)
     print("Fotos MVP - Diagnose")
     print("=" * 60)
@@ -75,13 +76,17 @@ def run_doctor() -> int:
     print(f"  Torch version: {gpu_info['torch_version']}")
     print(f"  CUDA version: {gpu_info['cuda_version']}")
 
-    yolo_info = _check_yolo()
+    config: dict[str, object] = {}
+    if db_path and db_path.exists():
+        config = get_admin_config(db_path)
+
+    yolo_info = _check_yolo(config)
     print("\n[YOLO (Objekt-Erkennung)]")
     print(f"  Available: {yolo_info['available']}")
     print(f"  Model name: {yolo_info['model_name']}")
     print(f"  Confidence threshold: {yolo_info['confidence_threshold']}")
 
-    backend_info = _check_person_backend()
+    backend_info = _check_person_backend(config)
     print("\n[Personen-Backend (Embedding)]")
     print(f"  Preferred: {backend_info.get('preferred', 'N/A')}")
     print(f"  Resolved: {backend_info.get('resolved', 'N/A')}")
@@ -89,18 +94,16 @@ def run_doctor() -> int:
     if "error" in backend_info:
         print(f"  Error: {backend_info['error']}")
 
-    print("\n[Umgebungsvariablen]")
-    env_vars = {
-        "FOTOS_YOLO_MODEL": "yolov8n.pt",
-        "FOTOS_YOLO_CONF": "0.25",
-        "FOTOS_PERSON_THRESHOLD": "0.38",
-        "FOTOS_PERSON_TOP_K": "3",
-        "FOTOS_PERSON_BACKEND": "insightface",
-        "FOTOS_INSIGHTFACE_MODEL": "buffalo_l",
-    }
-    for var, default_val in env_vars.items():
-        current_val = os.getenv(var, f"(default: {default_val})")
-        print(f"  {var}: {current_val}")
+    print("\n[Admin-Konfiguration (SQLite)]")
+    for key in (
+        "yolo_model",
+        "yolo_confidence",
+        "person_backend",
+        "person_threshold",
+        "person_top_k",
+        "insightface_model",
+    ):
+        print(f"  {key}: {config.get(key, '(default)')}")
 
     print("\n" + "=" * 60)
     status = "OK" if gpu_info["cuda_available"] and yolo_info["available"] else "WARNING"

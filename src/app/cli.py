@@ -477,8 +477,7 @@ def _album_timelapse_command(
     initialize_insightface_settings(db_path)
 
     if person_backend:
-        import os
-        os.environ["FOTOS_PERSON_BACKEND"] = person_backend
+        print("Hinweis: --person-backend wird ignoriert; es gilt person_backend aus der Admin-Konfiguration (SQLite).")
 
     output_path = Path(output_file)
     cfg = TimelapseConfig(
@@ -680,7 +679,7 @@ def main() -> int:
             max_persons=args.max_persons,
         )
     if args.command == "doctor":
-        return run_doctor()
+        return run_doctor(db_path=config.resolve_db_path(args.db))
     if args.command == "web":
         return _web_command(
             config=config,
