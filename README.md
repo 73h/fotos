@@ -90,9 +90,6 @@ source .venv/bin/activate  # Linux/Mac
 # Abhängigkeiten
 pip install -r requirements.txt
 pip install -r requirements-face.txt  # Für InsightFace
-
-# GPU Setup (optional)
-./scripts/setup_gpu.ps1  # Windows PowerShell
 ```
 
 ### Anwendung starten
