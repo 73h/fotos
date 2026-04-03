@@ -1,11 +1,19 @@
 # 📸 Fotos - Lokale KI-basierte Fotoverwaltung
 
+![Vibe Coding](https://img.shields.io/badge/Coded%20with-100%25%20Vibe%20Coding-blueviolet?style=for-the-badge&logo=github)
+![GitHub Copilot](https://img.shields.io/badge/Powered%20by-GitHub%20Copilot-000000?style=for-the-badge&logo=githubcopilot)
+
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![Flask](https://img.shields.io/badge/Flask-2.0+-green.svg)](https://flask.palletsprojects.com/)
 [![SQLite](https://img.shields.io/badge/SQLite-3-lightblue.svg)](https://www.sqlite.org/)
 [![YOLO](https://img.shields.io/badge/YOLO-v8-red.svg)](https://github.com/ultralytics/yolov8)
 
 Lokale Foto-Suchmaschine mit YOLO-Objekterkennung, InsightFace-Gesichtserkennung, Album-Management und KI-Timelapse.
+
+## ✨ About this project
+
+- This project is **100% vibe coded** using **GitHub Copilot**.  
+- No overthinking – just flow, intuition, and AI-assisted creativity 🚀
 
 ## ✨ Features
 
