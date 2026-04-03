@@ -117,6 +117,7 @@ def _build_photo_filter_clause(
 
     persons_filter = filters["persons"]
     smile_min = filters["smile_min"]
+    person_unknown = filters["person_unknown"]
 
     # Pro Person ein eigenes EXISTS (UND-Verknuepfung)
     for person_name in persons_filter:
@@ -147,6 +148,18 @@ def _build_photo_filter_clause(
             """
         )
         params.append(smile_min)
+
+    if person_unknown:
+        where_parts.append(
+            """
+            photos.person_count > 0
+            AND photos.person_count > (
+                SELECT COUNT(*)
+                FROM photo_person_matches m
+                WHERE m.photo_path = photos.path
+            )
+            """
+        )
 
     if person_count is not None:
         where_parts.append("person_count = ?")

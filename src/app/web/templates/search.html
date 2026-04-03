@@ -18,7 +18,7 @@
           hx-push-url="true"
           hx-indicator="#loading"
         >
-          <input class="search-input search-input--query" type="text" name="q" value="{{ query }}" placeholder="z. B. hund strand person:max person:marie month:3 year:2023" aria-label="Suchbegriff" />
+          <input class="search-input search-input--query" type="text" name="q" value="{{ query }}" placeholder="z. B. person:marie person:unknown yolo:cat yolo:car month:3 year:2023" aria-label="Suchbegriff" />
           <input class="search-input search-input--compact" type="number" name="per_page" value="{{ per_page }}" min="1" max="200" aria-label="Treffer pro Seite" />
           <input type="hidden" name="album_id" value="{{ active_album_id if active_album_id else '' }}" />
           <select class="search-input search-input--select" name="person_id" id="person-filter-select" onchange="filterByPerson()" aria-label="Person filtern">

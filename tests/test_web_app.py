@@ -1015,6 +1015,79 @@ class WebAppTests(unittest.TestCase):
             found_paths = {Path(item["path"]).name for item in payload_person_only["items"]}
             self.assertEqual(found_paths, {"person_smile_high.jpg", "person_smile_low.jpg"})
 
+    def test_api_search_supports_person_unknown_filter(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            workspace = Path(tmp_dir)
+            db_path = workspace / "data" / "photo_index.db"
+            cache_dir = workspace / "data" / "cache"
+            photos_dir = workspace / "photos"
+            photos_dir.mkdir(parents=True, exist_ok=True)
+            ensure_schema(db_path)
+
+            known_only = photos_dir / "known_only.jpg"
+            known_plus_unknown = photos_dir / "known_plus_unknown.jpg"
+            unknown_only = photos_dir / "unknown_only.jpg"
+            for image_path in (known_only, known_plus_unknown, unknown_only):
+                Image.new("RGB", (220, 140), color=(120, 140, 180)).save(image_path)
+                stat = image_path.stat()
+                upsert_photo(
+                    db_path=db_path,
+                    record=ImageRecord(
+                        path=image_path,
+                        size_bytes=stat.st_size,
+                        modified_ts=stat.st_mtime,
+                        exif_data=ExifData(latitude=48.1372, longitude=11.5756),
+                    ),
+                    labels=["urlaub"],
+                    person_count=1 if image_path != known_plus_unknown else 2,
+                )
+
+            with sqlite3.connect(db_path) as conn:
+                conn.execute("INSERT INTO persons (name) VALUES (?)", ("Marie Curie",))
+                person_id = int(conn.execute("SELECT id FROM persons WHERE name = ?", ("Marie Curie",)).fetchone()[0])
+                conn.execute(
+                    """
+                    INSERT INTO photo_person_matches (photo_path, person_id, score, smile_score, matched_ts)
+                    VALUES (?, ?, ?, ?, strftime('%s','now'))
+                    """,
+                    (str(known_only), person_id, 0.92, 0.80),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO photo_person_matches (photo_path, person_id, score, smile_score, matched_ts)
+                    VALUES (?, ?, ?, ?, strftime('%s','now'))
+                    """,
+                    (str(known_plus_unknown), person_id, 0.91, 0.75),
+                )
+
+            app = create_app(
+                app_config=AppConfig.from_workspace(workspace_root=workspace),
+                custom_db_path=str(db_path),
+                custom_cache_dir=str(cache_dir),
+            )
+            client = app.test_client()
+
+            unknown_response = client.get('/api/search?q=person:unknown')
+            self.assertEqual(unknown_response.status_code, 200)
+            unknown_payload = unknown_response.get_json()
+            assert unknown_payload is not None
+            unknown_paths = {Path(item["path"]).name for item in unknown_payload["items"]}
+            self.assertEqual(unknown_paths, {"known_plus_unknown.jpg", "unknown_only.jpg"})
+
+            combined_response = client.get('/api/search?q=person:"Marie Curie" person:unknown')
+            self.assertEqual(combined_response.status_code, 200)
+            combined_payload = combined_response.get_json()
+            assert combined_payload is not None
+            combined_paths = {Path(item["path"]).name for item in combined_payload["items"]}
+            self.assertEqual(combined_paths, {"known_plus_unknown.jpg"})
+
+            map_response = client.get('/api/photos-with-location?q=person:unknown')
+            self.assertEqual(map_response.status_code, 200)
+            map_payload = map_response.get_json()
+            assert map_payload is not None
+            map_paths = {Path(item["path"]).name for item in map_payload["photos"]}
+            self.assertEqual(map_paths, {"known_plus_unknown.jpg", "unknown_only.jpg"})
+
     def test_timelapse_rebuilds_existing_video_instead_of_using_cache(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             workspace = Path(tmp_dir)

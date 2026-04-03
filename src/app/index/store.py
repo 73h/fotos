@@ -658,6 +658,7 @@ class SearchFilterDict(TypedDict):
     year: int | None
     persons: list[str]
     smile_min: float | None
+    person_unknown: bool
 
 
 def parse_search_filters(query: str) -> tuple[list[str], SearchFilterDict]:
@@ -668,6 +669,7 @@ def parse_search_filters(query: str) -> tuple[list[str], SearchFilterDict]:
     - month:MM
     - year:YYYY
     - person:<name> (auch person:"Vorname Nachname") – mehrfach fuer UND-Verknuepfung
+    - person:unknown (mindestens eine erkannte, aber nicht gematchte Person)
     - smile:<threshold> (0..1 oder 0..100)
     """
     tokens = [term.strip() for term in _safe_split_query(query) if term.strip()]
@@ -676,6 +678,7 @@ def parse_search_filters(query: str) -> tuple[list[str], SearchFilterDict]:
     year_filter: int | None = None
     persons_filter: list[str] = []
     smile_min: float | None = None
+    person_unknown = False
     filtered_terms: list[str] = []
 
     for token in tokens:
@@ -701,6 +704,9 @@ def parse_search_filters(query: str) -> tuple[list[str], SearchFilterDict]:
 
         if term.startswith("person:"):
             person_value = token[7:].strip()
+            if person_value.lower() == "unknown":
+                person_unknown = True
+                continue
             if person_value and person_value.lower() not in [p.lower() for p in persons_filter]:
                 persons_filter.append(person_value)
             continue
@@ -720,12 +726,14 @@ def parse_search_filters(query: str) -> tuple[list[str], SearchFilterDict]:
 
         filtered_terms.append(term)
 
-    return filtered_terms, {
+    filters: SearchFilterDict = {
         "month": month_filter,
         "year": year_filter,
         "persons": persons_filter,
         "smile_min": smile_min,
+        "person_unknown": person_unknown,
     }
+    return filtered_terms, filters
 
 
 def _parse_date_filters(query: str) -> tuple[list[str], dict[str, object]]:
@@ -751,6 +759,7 @@ def search_photos_page(
     year_filter = filters["year"]
     persons_filter = filters["persons"]
     smile_min = filters["smile_min"]
+    person_unknown = filters["person_unknown"]
 
     if (
         not terms
@@ -759,6 +768,7 @@ def search_photos_page(
         and not (month_filter or year_filter)
         and not persons_filter
         and smile_min is None
+        and not person_unknown
     ):
         return [], 0
 
@@ -815,6 +825,18 @@ def search_photos_page(
                 WHERE m.photo_path = photos.path
                   AND m.smile_score IS NOT NULL
                   AND m.smile_score >= ?
+            )
+            """
+        )
+
+    if person_unknown:
+        where_parts.append(
+            """
+            photos.person_count > 0
+            AND photos.person_count > (
+                SELECT COUNT(*)
+                FROM photo_person_matches m
+                WHERE m.photo_path = photos.path
             )
             """
         )
