@@ -139,6 +139,62 @@ class WebAppTests(unittest.TestCase):
             self.assertEqual(after_start["person_backend"], "auto")
             self.assertEqual(after_start["index_workers"], 2)
 
+    def test_admin_rematch_order_mode_is_wired_through_web_ui_route(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            workspace = Path(tmp_dir)
+            db_path = workspace / "data" / "photo_index.db"
+            cache_dir = workspace / "data" / "cache"
+            ensure_schema(db_path)
+
+            app = create_app(
+                app_config=AppConfig.from_workspace(workspace_root=workspace),
+                custom_db_path=str(db_path),
+                custom_cache_dir=str(cache_dir),
+            )
+            client = app.test_client()
+
+            admin_page_response = client.get("/admin")
+            self.assertEqual(admin_page_response.status_code, 200)
+            admin_html = admin_page_response.get_data(as_text=True)
+            self.assertIn("rematch-order-select", admin_html)
+            self.assertIn("Gemischt", admin_html)
+            self.assertIn("Voll zufällig", admin_html)
+
+            with patch(
+                "src.app.web.admin_service.AdminService.start_rematch_persons",
+                return_value="rematch_test_1",
+            ) as mocked_start:
+                response = client.post(
+                    "/api/admin/config/start-rematch",
+                    json={
+                        "person_backend": "histogram",
+                        "workers": 6,
+                        "order_mode": "random",
+                    },
+                )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.get_json()
+            assert payload is not None
+            self.assertEqual(payload["job_id"], "rematch_test_1")
+            self.assertEqual(payload["status"], "started")
+            self.assertEqual(int(payload["workers"]), 6)
+            self.assertEqual(payload["order_mode"], "random")
+
+            mocked_start.assert_called_once_with(
+                person_backend="histogram",
+                workers=6,
+                order_mode="random",
+            )
+
+            config_response = client.get("/api/admin/config")
+            self.assertEqual(config_response.status_code, 200)
+            config_payload = config_response.get_json()
+            assert config_payload is not None
+            self.assertEqual(config_payload["person_backend"], "histogram")
+            self.assertEqual(int(config_payload["rematch_workers"]), 6)
+            self.assertEqual(config_payload["rematch_order"], "random")
+
     def test_api_search_pagination_and_thumbnail_cache(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             workspace = Path(tmp_dir)

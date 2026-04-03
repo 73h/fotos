@@ -266,6 +266,46 @@ class RematchLabelConsistencyTests(unittest.TestCase):
             self.assertIn("person:marie", row["labels"])
             self.assertIn("nature", row["labels"])
 
+    def test_rematch_order_is_mixed_for_early_progress(self) -> None:
+        """Die ersten Schritte sollen alte und neue Fotos mischen."""
+        photos = [Path(f"photo_{idx:02d}.jpg") for idx in range(20)]
+        sort_ts = {str(path): float(idx) for idx, path in enumerate(photos)}
+
+        mixed = AdminService._build_mixed_rematch_order(photos, sort_ts, seed="job_test")
+
+        self.assertEqual(len(mixed), len(photos))
+        self.assertEqual({str(p) for p in mixed}, {str(p) for p in photos})
+
+        first_ten_indices = [int(str(path.stem).split("_")[1]) for path in mixed[:10]]
+        older_half = sum(1 for idx in first_ten_indices if idx < 10)
+        newer_half = sum(1 for idx in first_ten_indices if idx >= 10)
+        self.assertGreaterEqual(older_half, 3)
+        self.assertGreaterEqual(newer_half, 3)
+
+    def test_rematch_order_chrono_sorts_oldest_first(self) -> None:
+        """Chronologisch soll streng nach Zeitstempel sortieren."""
+        photos = [Path("photo_b.jpg"), Path("photo_a.jpg"), Path("photo_c.jpg")]
+        sort_ts = {
+            str(photos[0]): 20.0,
+            str(photos[1]): 10.0,
+            str(photos[2]): 30.0,
+        }
+
+        ordered = AdminService._order_rematch_paths(photos, sort_ts, order_mode="chrono", seed="job_test")
+        self.assertEqual(ordered, [photos[1], photos[0], photos[2]])
+
+    def test_rematch_order_random_is_seeded_but_not_chronological(self) -> None:
+        """Voll zufällig soll reproduzierbar sein, aber nicht einfach chronologisch."""
+        photos = [Path(f"photo_{idx:02d}.jpg") for idx in range(8)]
+        sort_ts = {str(path): float(idx) for idx, path in enumerate(photos)}
+
+        ordered_a = AdminService._order_rematch_paths(photos, sort_ts, order_mode="random", seed="job_test")
+        ordered_b = AdminService._order_rematch_paths(photos, sort_ts, order_mode="random", seed="job_test")
+
+        self.assertEqual(ordered_a, ordered_b)
+        self.assertEqual({str(p) for p in ordered_a}, {str(p) for p in photos})
+        self.assertNotEqual(ordered_a, photos)
+
 
 if __name__ == "__main__":
     unittest.main()

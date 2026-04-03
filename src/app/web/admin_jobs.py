@@ -46,6 +46,7 @@ class JobProgress:
             "percentage": round(self.percentage, 2),
             "message": self.message,
             "error": self.error,
+            "start_time": self.start_time,
             "elapsed_seconds": round(elapsed, 1),
             "end_time": self.end_time,
         }

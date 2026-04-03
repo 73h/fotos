@@ -502,7 +502,7 @@
         const response = await fetch(`/api/geocode?q=${encodeURIComponent(place)}`);
         const data = await response.json();
         if (!data.results || data.results.length === 0) {
-          alert("Ort nicht gefunden.");
+          (window.showToast || window.alert)("Ort nicht gefunden.", "info", 2200);
           return;
         }
         const first = data.results[0];
@@ -516,7 +516,7 @@
         applyPlaceFilter();
       } catch (error) {
         console.error("Fehler bei der Ortssuche:", error);
-        alert("Ortssuche derzeit nicht verfügbar.");
+        (window.showToast || window.alert)("Ortssuche derzeit nicht verfügbar.", "error", 3200);
       }
     }
 
@@ -546,7 +546,7 @@
 
     function fitToPhotos() {
       if (filteredPhotos.length === 0) {
-        alert("Keine Fotos mit GPS-Daten gefunden.");
+        (window.showToast || window.alert)("Keine Fotos mit GPS-Daten gefunden.", "info", 2400);
         return;
       }
 

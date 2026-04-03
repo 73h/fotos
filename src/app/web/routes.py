@@ -26,7 +26,7 @@ from ..albums.store import (
     set_album_cover,
 )
 from ..albums.export import export_album_zip, parse_ratio
-from ..index.store import ensure_schema, get_admin_config, parse_search_filters, save_admin_config, update_person_labels
+from ..index.store import ADMIN_REMATCH_ORDER_MODES, ensure_schema, get_admin_config, parse_search_filters, save_admin_config, update_person_labels
 from ..persons import list_persons
 from ..persons.ranking import select_aging_timelapse_photo_paths
 from ..persons.embeddings import cosine_similarity
@@ -1571,6 +1571,19 @@ def api_admin_start_rematch():
 
     try:
         data = request.get_json() or {}
+        try:
+            requested_workers = int(data.get("workers", 1))
+        except (TypeError, ValueError):
+            return jsonify({"error": "workers muss eine Zahl sein"}), 400
+
+        requested_order = str(data.get("order_mode", "mixed")).strip().lower() or "mixed"
+        if requested_order not in ADMIN_REMATCH_ORDER_MODES:
+            return jsonify({"error": "order_mode ist ungueltig"}), 400
+
+        cpu_count = os.cpu_count() or 4
+        max_workers = max(1, min(32, cpu_count * 2))
+        safe_workers = max(1, min(requested_workers, max_workers))
+
         app_config: AppConfig = current_app.config.get("APP_CONFIG")
         db_path: Path = current_app.config["DB_PATH"]
         ensure_schema(db_path)
@@ -1578,7 +1591,8 @@ def api_admin_start_rematch():
             db_path,
             {
                 "person_backend": data.get("person_backend"),
-                "rematch_workers": data.get("workers", 1),
+                "rematch_workers": safe_workers,
+                "rematch_order": requested_order,
             },
         )
         job_manager = get_job_manager()
@@ -1586,9 +1600,10 @@ def api_admin_start_rematch():
 
         job_id = admin_service.start_rematch_persons(
             person_backend=data.get("person_backend"),
-            workers=data.get("workers", 1),
+            workers=safe_workers,
+            order_mode=requested_order,
         )
-        return jsonify({"job_id": job_id, "status": "started"})
+        return jsonify({"job_id": job_id, "status": "started", "workers": safe_workers, "max_workers": max_workers, "order_mode": requested_order})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

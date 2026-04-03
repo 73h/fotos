@@ -2,7 +2,7 @@
 Admin-Service für Indexierung, Rematch und EXIF-Updates über die Web-UI.
 Integriert mit dem Job-Manager für Progress-Tracking.
 """
-import os
+import random
 import sqlite3
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -84,6 +84,7 @@ class AdminService:
         self,
         person_backend: Optional[str] = None,
         workers: int = 1,
+        order_mode: str = "mixed",
     ) -> str:
         """Startet Rematch-Job und gibt Job-ID zurück."""
         job_id = f"rematch_{uuid.uuid4().hex[:8]}"
@@ -95,6 +96,7 @@ class AdminService:
                     job=progress_job,
                     person_backend=person_backend,
                     workers=workers,
+                    order_mode=order_mode,
                 )
             except Exception as e:
                 raise Exception(f"Rematch-Fehler: {str(e)}")
@@ -317,6 +319,7 @@ class AdminService:
         job: JobProgress,
         person_backend: Optional[str] = None,
         workers: int = 1,
+        order_mode: str = "mixed",
     ) -> None:
         """Führt Rematch aus."""
         from ..persons.embeddings import initialize_insightface_settings
@@ -332,9 +335,16 @@ class AdminService:
         initialize_insightface_settings(db_path)
 
         with sqlite3.connect(db_path) as conn:
-            rows = conn.execute("SELECT path FROM photos ORDER BY path").fetchall()
+            rows = conn.execute(
+                """
+                SELECT path, COALESCE(taken_ts, modified_ts, 0)
+                FROM photos
+                ORDER BY COALESCE(taken_ts, modified_ts, 0) ASC, path ASC
+                """
+            ).fetchall()
 
         photo_paths_all = [Path(row[0]) for row in rows]
+        sort_ts_by_path = {str(row[0]): float(row[1] or 0.0) for row in rows}
         photo_paths_existing = [p for p in photo_paths_all if p.exists()]
         photo_paths_str = [str(p) for p in photo_paths_existing]
         missing = len(photo_paths_all) - len(photo_paths_existing)
@@ -342,6 +352,7 @@ class AdminService:
         # Filtere nur die Fotos, die ein Rematch brauchen
         photos_needing_rematch = get_photos_needing_rematch(db_path, photo_paths_str)
         existing = [Path(p) for p in photos_needing_rematch]
+        existing = self._order_rematch_paths(existing, sort_ts_by_path, order_mode=order_mode, seed=job.job_id)
 
         if not existing:
             job.message = "Keine Fotos brauchen Rematch"
@@ -421,4 +432,60 @@ class AdminService:
                 executor.shutdown(wait=False)
 
         job.message = f"✓ {processed} Fotos verarbeitet, {matched} mit Personen-Treffer"
+
+    @staticmethod
+    def _build_mixed_rematch_order(
+        photo_paths: list[Path],
+        sort_ts_by_path: dict[str, float],
+        seed: str,
+    ) -> list[Path]:
+        """Mischt alte und neue Fotos, damit frueher Fortschritt repräsentativ ist."""
+        if len(photo_paths) <= 2:
+            return list(photo_paths)
+
+        rng = random.Random(seed)
+        sorted_paths = sorted(photo_paths, key=lambda p: (sort_ts_by_path.get(str(p), 0.0), str(p)))
+        bucket_count = min(10, len(sorted_paths))
+        buckets: list[list[Path]] = [[] for _ in range(bucket_count)]
+
+        for idx, photo_path in enumerate(sorted_paths):
+            bucket_idx = min(bucket_count - 1, int((idx * bucket_count) / len(sorted_paths)))
+            buckets[bucket_idx].append(photo_path)
+
+        for bucket in buckets:
+            rng.shuffle(bucket)
+
+        mixed: list[Path] = []
+        cursor = rng.randrange(bucket_count) if bucket_count > 1 else 0
+
+        while len(mixed) < len(sorted_paths):
+            emitted = False
+            for offset in range(bucket_count):
+                idx = (cursor + offset) % bucket_count
+                if not buckets[idx]:
+                    continue
+                mixed.append(buckets[idx].pop())
+                emitted = True
+            if not emitted:
+                break
+            cursor = (cursor + 1) % bucket_count
+
+        return mixed
+
+    @staticmethod
+    def _order_rematch_paths(
+        photo_paths: list[Path],
+        sort_ts_by_path: dict[str, float],
+        order_mode: str,
+        seed: str,
+    ) -> list[Path]:
+        normalized_mode = str(order_mode or "mixed").strip().lower()
+        if normalized_mode == "chrono":
+            return sorted(photo_paths, key=lambda p: (sort_ts_by_path.get(str(p), 0.0), str(p)))
+        if normalized_mode == "random":
+            rng = random.Random(seed)
+            shuffled = list(photo_paths)
+            rng.shuffle(shuffled)
+            return shuffled
+        return AdminService._build_mixed_rematch_order(photo_paths, sort_ts_by_path, seed=seed)
 

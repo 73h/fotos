@@ -20,6 +20,7 @@ ADMIN_CONFIG_DEFAULTS: dict[str, object] = {
     "near_duplicates": False,
     "phash_threshold": 6,
     "rematch_workers": 1,
+    "rematch_order": "mixed",
     # YOLO-Objekterkennung (für maximale Qualität + GPU)
     "yolo_model": "yolov8n.pt",
     "yolo_confidence": 0.25,
@@ -42,6 +43,9 @@ ADMIN_CONFIG_DEFAULTS: dict[str, object] = {
     "timelapse_face_onnx_provider": "auto",
     "timelapse_face_onnx_size": 256,
 }
+
+ADMIN_MAX_REMATCH_WORKERS = 32
+ADMIN_REMATCH_ORDER_MODES = {"chrono", "mixed", "random"}
 
 
 @dataclass(frozen=True)
@@ -255,9 +259,16 @@ def _normalize_admin_config(raw_config: dict[str, object]) -> dict[str, object]:
         pass
 
     try:
-        normalized["rematch_workers"] = max(1, int(raw_config.get("rematch_workers", normalized["rematch_workers"])))
+        normalized["rematch_workers"] = max(
+            1,
+            min(ADMIN_MAX_REMATCH_WORKERS, int(raw_config.get("rematch_workers", normalized["rematch_workers"]))),
+        )
     except (TypeError, ValueError):
         pass
+
+    raw_rematch_order = str(raw_config.get("rematch_order", normalized["rematch_order"])).strip().lower()
+    if raw_rematch_order in ADMIN_REMATCH_ORDER_MODES:
+        normalized["rematch_order"] = raw_rematch_order
 
     # YOLO-Einstellungen
     yolo_model = raw_config.get("yolo_model", normalized["yolo_model"])

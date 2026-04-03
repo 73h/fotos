@@ -45,6 +45,39 @@
     });
   }
 
+  function showToast(message, type = "info", durationMs = 2600) {
+    const text = String(message || "").trim();
+    if (!text) {
+      return;
+    }
+
+    let container = document.getElementById("toast-container");
+    if (!container) {
+      container = document.createElement("div");
+      container.id = "toast-container";
+      container.className = "toast-container";
+      container.setAttribute("aria-live", "polite");
+      container.setAttribute("aria-atomic", "true");
+      document.body.appendChild(container);
+    }
+
+    const toast = document.createElement("div");
+    toast.className = `toast toast--${type}`;
+    toast.textContent = text;
+    container.appendChild(toast);
+
+    window.requestAnimationFrame(() => {
+      toast.classList.add("is-visible");
+    });
+
+    const hide = () => {
+      toast.classList.remove("is-visible");
+      window.setTimeout(() => toast.remove(), 220);
+    };
+
+    window.setTimeout(hide, Math.max(1200, Number(durationMs) || 2600));
+  }
+
   function toggleAlbumMenu(event, buttonElement) {
     event.stopPropagation();
     const menuWrapper = buttonElement.closest("[data-album-menu]");
@@ -160,7 +193,7 @@
 
     if (!response.ok) {
       const errorPayload = await response.json().catch(() => ({}));
-      window.alert(errorPayload.error || "Foto konnte nicht zum Album hinzugefuegt werden.");
+      showToast(errorPayload.error || "Foto konnte nicht zum Album hinzugefuegt werden.", "error", 3200);
       return false;
     }
 
@@ -184,7 +217,7 @@
 
       if (!response.ok) {
         const errorPayload = await response.json().catch(() => ({}));
-        window.alert(errorPayload.error || "Foto konnte nicht aus Album entfernt werden.");
+        showToast(errorPayload.error || "Foto konnte nicht aus Album entfernt werden.", "error", 3200);
         return;
       }
 
@@ -200,7 +233,7 @@
         }, 300);
       }
     } catch (error) {
-      window.alert(`Fehler: ${error}`);
+      showToast(`Fehler: ${error}`, "error", 3600);
     }
   }
 
@@ -284,14 +317,14 @@
 
       if (!response.ok) {
         const errorPayload = await response.json().catch(() => ({}));
-        window.alert(errorPayload.error || "Album konnte nicht umbenannt werden.");
+        showToast(errorPayload.error || "Album konnte nicht umbenannt werden.", "error", 3200);
         return;
       }
 
-      window.alert("Album erfolgreich umbenannt.");
+      showToast("Album erfolgreich umbenannt.", "success", 2200);
       await refreshAlbumSidebar();
     } catch (error) {
-      window.alert(`Fehler: ${error}`);
+      showToast(`Fehler: ${error}`, "error", 3600);
     }
   }
 
@@ -318,14 +351,14 @@
 
       if (!response.ok) {
         const errorPayload = await response.json().catch(() => ({}));
-        window.alert(errorPayload.error || "Album konnte nicht gelöscht werden.");
+        showToast(errorPayload.error || "Album konnte nicht gelöscht werden.", "error", 3200);
         return;
       }
 
-      window.alert("Album gelöscht.");
+      showToast("Album gelöscht.", "success", 2200);
       await refreshAlbumSidebar();
     } catch (error) {
-      window.alert(`Fehler: ${error}`);
+      showToast(`Fehler: ${error}`, "error", 3600);
     }
   }
 
@@ -352,15 +385,15 @@
 
       if (!response.ok) {
         const errorPayload = await response.json().catch(() => ({}));
-        window.alert(errorPayload.error || "Album konnte nicht dupliziert werden.");
+        showToast(errorPayload.error || "Album konnte nicht dupliziert werden.", "error", 3200);
         return;
       }
 
       const payload = await response.json().catch(() => ({}));
-      window.alert(`Album dupliziert: ${payload.name || "Kopie erstellt"}`);
+      showToast(`Album dupliziert: ${payload.name || "Kopie erstellt"}`, "success", 2200);
       await refreshAlbumSidebar();
     } catch (error) {
-      window.alert(`Fehler: ${error}`);
+      showToast(`Fehler: ${error}`, "error", 3600);
     }
   }
 
@@ -372,13 +405,12 @@
       return;
     }
 
-    if (
-      window.confirm(
-        `Person "${personName}" aus Album "${albumName}" mit allen enthaltenen Bildern neu anlernen?\n\nDafür wird InsightFace verwendet und vorhandene Referenzen werden ersetzt.`
-      )
-    ) {
-      trainReferenceAlbum(albumId, personName);
-    }
+    showToast(
+      `Neu-Anlernen fuer "${personName}" aus "${albumName}" wird gestartet...`,
+      "info",
+      2200
+    );
+    trainReferenceAlbum(albumId, personName);
   }
 
   async function trainReferenceAlbum(albumId, personName) {
@@ -392,17 +424,19 @@
 
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        window.alert(payload.error || "Person konnte nicht aus dem Ref-Album angelernt werden.");
+        showToast(payload.error || "Person konnte nicht aus dem Ref-Album angelernt werden.", "error", 3200);
         return;
       }
 
       const jobId = payload.job_id ? String(payload.job_id) : "";
-      window.alert(
-        `Training fuer "${personName}" gestartet.${jobId ? `\nJob-ID: ${jobId}` : ""}\n\nDen Fortschritt siehst du im Admin-Bereich unter laufenden Jobs.`
+      showToast(
+        `Training fuer "${personName}" gestartet.${jobId ? `\nJob-ID: ${jobId}` : ""}\n\nDen Fortschritt siehst du im Admin-Bereich unter laufenden Jobs.`,
+        "success",
+        3600
       );
       await refreshAlbumSidebar();
     } catch (error) {
-      window.alert(`Fehler: ${error}`);
+      showToast(`Fehler: ${error}`, "error", 3600);
     }
   }
 
@@ -968,6 +1002,7 @@
   window.startAgingAlbumBuild = startAgingAlbumBuild;
   window.startAlbumTimelapse = startAlbumTimelapse;
   window.startAlbumZipExport = startAlbumZipExport;
+  window.showToast = showToast;
 
   // Photo Modal functions
   async function openPhotoModal(photoToken) {
@@ -1270,7 +1305,7 @@
         // Keine harte Seitenaktualisierung: Nur Ergebnisgrid auf Wunsch mit normaler Suche neu laden.
       }
     } catch (error) {
-      window.alert(`Fehler: ${error}`);
+      showToast(`Fehler: ${error}`, "error", 3600);
       if (buttonEl) {
         buttonEl.disabled = false;
         buttonEl.textContent = "Entfernen";
@@ -1305,7 +1340,7 @@
       setPhotoModalNotice(successMessage, "success");
       await refreshPhotoDetails(photoToken);
     } catch (error) {
-      window.alert(`Fehler: ${error}`);
+      showToast(`Fehler: ${error}`, "error", 3600);
       if (buttonEl) {
         buttonEl.disabled = false;
         buttonEl.textContent = "Personen-Rematch starten";

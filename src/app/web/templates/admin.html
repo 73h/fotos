@@ -292,7 +292,21 @@
               <option value="4">4</option>
               <option value="8">8</option>
               <option value="10">10</option>
+              <option value="12">12</option>
+              <option value="16">16</option>
+              <option value="20">20</option>
+              <option value="24">24</option>
+              <option value="32">32</option>
             </select>
+          </div>
+          <div class="form-group">
+            <label for="rematch-order-select">Reihenfolge:</label>
+            <select id="rematch-order-select" class="form-control">
+              <option value="mixed" selected>Gemischt (alt + neu früh gemischt)</option>
+              <option value="chrono">Chronologisch (ältere zuerst)</option>
+              <option value="random">Voll zufällig</option>
+            </select>
+            <small>"Gemischt" liefert schon früh im Fortschritt einen guten Querschnitt.</small>
           </div>
           <button
             class="btn btn-secondary"
@@ -305,7 +319,7 @@
     </section>
 
     <!-- Jobs Section -->
-    <section class="admin-section">
+    <section class="admin-section" id="jobs-section">
       <h2>📋 Laufende Jobs</h2>
       <div id="jobs-container" class="jobs-container">
         <p class="text-muted">Keine laufenden Jobs...</p>
@@ -426,6 +440,10 @@
   display: flex;
   flex-direction: column;
   gap: 24px;
+}
+
+#jobs-section {
+  order: -1;
 }
 
 .admin-section {
@@ -878,6 +896,7 @@ function collectAdminConfig() {
     near_duplicates: document.getElementById('near-duplicates-check').checked,
     phash_threshold: parseInt(document.getElementById('phash-threshold-input').value),
     rematch_workers: parseInt(document.getElementById('rematch-workers-select').value),
+    rematch_order: document.getElementById('rematch-order-select').value || 'mixed',
   };
 }
 
@@ -910,6 +929,7 @@ function applyAdminConfig(config) {
   document.getElementById('near-duplicates-check').checked = Boolean(config.near_duplicates);
   document.getElementById('phash-threshold-input').value = String(config.phash_threshold ?? 6);
   document.getElementById('rematch-workers-select').value = String(config.rematch_workers || 1);
+  document.getElementById('rematch-order-select').value = String(config.rematch_order || 'mixed');
 }
 
 async function loadAdminConfig() {
@@ -978,6 +998,7 @@ function setupConfigAutoSave() {
     'near-duplicates-check',
     'phash-threshold-input',
     'rematch-workers-select',
+    'rematch-order-select',
   ];
   ids.forEach((id) => {
     const el = document.getElementById(id);
@@ -1008,7 +1029,14 @@ function renderJobsList(jobs) {
   }
 
   const sorted = [...jobs].sort((left, right) => {
-    return Number(right.elapsed_seconds || 0) - Number(left.elapsed_seconds || 0);
+    const leftStart = Number(left.start_time || 0);
+    const rightStart = Number(right.start_time || 0);
+    if (rightStart !== leftStart) {
+      return rightStart - leftStart;
+    }
+
+    // Fallback: juengerer Job hat i.d.R. kleinere Laufzeit
+    return Number(left.elapsed_seconds || 0) - Number(right.elapsed_seconds || 0);
   });
 
   container.innerHTML = sorted.map((job) => {
@@ -1050,7 +1078,7 @@ async function startFullIndex() {
   const config = collectAdminConfig();
   const roots = config.photo_roots;
   if (!roots.length) {
-    alert('Bitte mindestens einen Foto-Pfad eingeben');
+    (window.showToast || window.alert)('Bitte mindestens einen Foto-Pfad eingeben', 'info', 2400);
     return;
   }
 
@@ -1069,14 +1097,14 @@ async function startFullIndex() {
 
     if (!response.ok) {
       const error = await response.json();
-      alert(`Fehler: ${error.error}`);
+      (window.showToast || window.alert)(`Fehler: ${error.error}`, 'error', 3200);
       return;
     }
 
     const data = await response.json();
     showJobProgress(data.job_id);
   } catch (err) {
-    alert(`Fehler: ${err.message}`);
+    (window.showToast || window.alert)(`Fehler: ${err.message}`, 'error', 3200);
   }
 }
 
@@ -1090,14 +1118,14 @@ async function startExifUpdate() {
 
     if (!response.ok) {
       const error = await response.json();
-      alert(`Fehler: ${error.error}`);
+      (window.showToast || window.alert)(`Fehler: ${error.error}`, 'error', 3200);
       return;
     }
 
     const data = await response.json();
     showJobProgress(data.job_id);
   } catch (err) {
-    alert(`Fehler: ${err.message}`);
+    (window.showToast || window.alert)(`Fehler: ${err.message}`, 'error', 3200);
   }
 }
 
@@ -1106,6 +1134,7 @@ async function startRematchPersons() {
   const payload = {
     person_backend: config.person_backend,
     workers: config.rematch_workers,
+    order_mode: config.rematch_order || 'mixed',
   };
 
   try {
@@ -1118,14 +1147,14 @@ async function startRematchPersons() {
 
     if (!response.ok) {
       const error = await response.json();
-      alert(`Fehler: ${error.error}`);
+      (window.showToast || window.alert)(`Fehler: ${error.error}`, 'error', 3200);
       return;
     }
 
     const data = await response.json();
     showJobProgress(data.job_id);
   } catch (err) {
-    alert(`Fehler: ${err.message}`);
+    (window.showToast || window.alert)(`Fehler: ${err.message}`, 'error', 3200);
   }
 }
 
@@ -1194,12 +1223,12 @@ async function abortJob() {
     });
 
     if (response.ok) {
-      alert('Abbruch angefordert...');
+      (window.showToast || window.alert)('Abbruch angefordert...', 'success', 2200);
     } else {
-      alert('Abbruch fehlgeschlagen');
+      (window.showToast || window.alert)('Abbruch fehlgeschlagen', 'error', 3200);
     }
   } catch (err) {
-    alert(`Fehler: ${err.message}`);
+    (window.showToast || window.alert)(`Fehler: ${err.message}`, 'error', 3200);
   }
 }
 
