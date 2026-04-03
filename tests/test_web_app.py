@@ -15,6 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.app.config import AppConfig  # noqa: E402
+from src.app.albums.export import AlbumZipExportResult  # noqa: E402
 from src.app.index.store import ensure_schema, upsert_photo  # noqa: E402
 from src.app.ingest import ExifData, ImageRecord  # noqa: E402
 from src.app.persons.service import EnrollResult, PersonMatch  # noqa: E402
@@ -1286,6 +1287,42 @@ class WebAppTests(unittest.TestCase):
                     with archive.open(name, "r") as image_file:
                         with Image.open(image_file) as img:
                             self.assertEqual(img.width * 9, img.height * 16)
+
+    def test_album_zip_export_endpoint_forwards_exact_overlay_flag(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            workspace = Path(tmp_dir)
+            db_path = workspace / "data" / "photo_index.db"
+            cache_dir = workspace / "data" / "cache"
+            ensure_schema(db_path)
+
+            app = create_app(
+                app_config=AppConfig.from_workspace(workspace_root=workspace),
+                custom_db_path=str(db_path),
+                custom_cache_dir=str(cache_dir),
+            )
+            client = app.test_client()
+
+            fake_zip = cache_dir / "exports" / "dummy.zip"
+            fake_zip.parent.mkdir(parents=True, exist_ok=True)
+            fake_zip.write_bytes(b"PK\x05\x06" + b"\x00" * 18)
+
+            with patch(
+                "src.app.web.routes.export_album_zip",
+                return_value=AlbumZipExportResult(zip_path=fake_zip, exported_count=1),
+            ) as mocked_export:
+                response = client.post(
+                    "/api/albums/1/export-zip",
+                    json={
+                        "ratio": "1:1",
+                        "add_metadata_overlay": True,
+                        "metadata_overlay_exact_5pct": False,
+                    },
+                )
+
+            self.assertEqual(response.status_code, 200)
+            mocked_export.assert_called_once()
+            call_kwargs = mocked_export.call_args.kwargs
+            self.assertFalse(bool(call_kwargs["metadata_overlay_exact_5pct"]))
 
     def test_photo_details_include_full_exif_elements_and_person_mark_can_be_removed(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:

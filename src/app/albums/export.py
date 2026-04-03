@@ -13,6 +13,12 @@ import json as json_lib
 
 from ..index.store import ensure_schema
 
+_OVERLAY_FONT_CANDIDATES: tuple[str, ...] = (
+    "DejaVuSans.ttf",
+    "arial.ttf",
+    "Arial.ttf",
+)
+
 _ALLOWED_RATIOS: dict[str, tuple[int, int]] = {
     "3:2": (3, 2),
     "4:3": (4, 3),
@@ -340,18 +346,64 @@ def _get_image_metadata(db_path: Path, photo_path: Path) -> dict[str, str | None
         return {}
 
 
-def _draw_metadata_overlay(image: Image.Image, date_text: str, place_text: str | None) -> Image.Image:
+def _load_overlay_font(font_size: int):
+    for font_name in _OVERLAY_FONT_CANDIDATES:
+        try:
+            return ImageFont.truetype(font_name, size=font_size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
+def _text_size(draw: ImageDraw.ImageDraw, text: str, font) -> tuple[int, int]:
+    bbox = draw.textbbox((0, 0), text, font=font)
+    return int(round(bbox[2] - bbox[0])), int(round(bbox[3] - bbox[1]))
+
+
+def _fit_overlay_font(draw: ImageDraw.ImageDraw, text: str, target_text_height: int):
+    min_size = 8
+    max_size = max(min_size + 1, target_text_height * 3)
+    low, high = min_size, max_size
+    best_font = _load_overlay_font(min_size)
+    _, best_height = _text_size(draw, text, best_font)
+    best_delta = abs(best_height - target_text_height)
+
+    while low <= high:
+        mid = (low + high) // 2
+        font = _load_overlay_font(mid)
+        _, current_height = _text_size(draw, text, font)
+        current_delta = abs(current_height - target_text_height)
+        if current_delta < best_delta:
+            best_font = font
+            best_delta = current_delta
+
+        if current_height < target_text_height:
+            low = mid + 1
+        else:
+            high = mid - 1
+
+    _, best_height = _text_size(draw, text, best_font)
+    if best_height < target_text_height:
+        next_size = max(min_size + 1, target_text_height)
+        candidate_font = _load_overlay_font(next_size)
+        _, candidate_height = _text_size(draw, text, candidate_font)
+        if candidate_height >= best_height:
+            best_font = candidate_font
+
+    return best_font
+
+
+def _draw_metadata_overlay(
+    image: Image.Image,
+    date_text: str,
+    place_text: str | None,
+    *,
+    exact_text_height: bool = True,
+) -> Image.Image:
     """Zeichnet Ort, Datum rechts unten auf das Bild mit dynamischem Kontrasting."""
     try:
         draw = ImageDraw.Draw(image)
         width, height = image.size
-
-        # Schriftgröße: 5% der Bildhöhe
-        font_size = max(int(height * 0.05), 12)
-        try:
-            font = ImageFont.load_default()
-        except Exception:
-            font = ImageFont.load_default()
 
         # Format: "Ort, Datum" oder nur "Datum"
         if place_text:
@@ -359,13 +411,22 @@ def _draw_metadata_overlay(image: Image.Image, date_text: str, place_text: str |
         else:
             overlay_text = date_text
 
-        bbox = draw.textbbox((0, 0), overlay_text, font=font)
-        text_width = bbox[2] - bbox[0] + 4
-        text_height = bbox[3] - bbox[1] + 4
+        # Ziel: reale Text-Hoehe soll 5% der finalen Bildhoehe sein.
+        target_text_height = max(int(round(height * 0.05)), 12)
+        if exact_text_height:
+            font = _fit_overlay_font(draw, overlay_text, target_text_height)
+        else:
+            font = _load_overlay_font(target_text_height)
 
-        padding = max(2, int(width / 200))
+        text_width, text_height = _text_size(draw, overlay_text, font)
+
+        padding = max(4, int(height * 0.01))
+        text_width += padding
+        text_height += padding
         x = width - text_width - padding
         y = height - text_height - padding
+        x = max(padding, x)
+        y = max(padding, y)
 
         sample_region = image.crop((x, y, min(x + text_width, width), min(y + text_height, height)))
         avg_color = sample_region.convert("L").getextrema()
@@ -374,7 +435,7 @@ def _draw_metadata_overlay(image: Image.Image, date_text: str, place_text: str |
         text_color = (255, 255, 255) if avg_brightness < 128 else (0, 0, 0)
         outline_color = (0, 0, 0) if avg_brightness < 128 else (255, 255, 255)
 
-        outline_width = 1
+        outline_width = max(1, int(round(target_text_height * 0.08)))
         for adj_x in [-outline_width, 0, outline_width]:
             for adj_y in [-outline_width, 0, outline_width]:
                 if adj_x != 0 or adj_y != 0:
@@ -393,6 +454,7 @@ def export_album_zip(
     ratio_text: str,
     person_name: str | None = None,
     add_metadata_overlay: bool = False,
+    metadata_overlay_exact_5pct: bool = True,
 ) -> AlbumZipExportResult:
     ensure_schema(db_path)
     ratio_w, ratio_h = parse_ratio(ratio_text)
@@ -439,7 +501,12 @@ def export_album_zip(
                         metadata = _get_image_metadata(db_path, photo_path)
                         if metadata.get("date"):
                             place_text = metadata.get("place")
-                            cropped = _draw_metadata_overlay(cropped, metadata["date"], place_text)
+                            cropped = _draw_metadata_overlay(
+                                cropped,
+                                str(metadata["date"]),
+                                place_text,
+                                exact_text_height=metadata_overlay_exact_5pct,
+                            )
 
                 buffer = io.BytesIO()
                 cropped.save(buffer, format="JPEG", quality=92)
