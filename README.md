@@ -154,7 +154,77 @@ Mit Lächeln: "smile:0.8"
 Full Indexierung    - Scannt & verarbeitet alle Fotos
 EXIF Update         - Aktualisiert nur Metadaten
 Rematch Personen    - Neuberechnung mit neuen Settings
+Objekt-Erkennung    - Detaillierte YOLO-Analyse pro Bild
 ```
+
+### Feine Labels in der Indexierung speichern
+
+Du kannst bei der Standard-Indexierung feine YOLO-Klassenlabels mitschreiben:
+```bash
+python src/main.py index --root "D:/Fotos" --include-fine-labels
+```
+
+Beim späteren Re-Index hast du jetzt zwei Modi:
+
+```bash
+# Standard: feine Labels werden pro verarbeitetem Bild neu berechnet
+python src/main.py index --root "D:/Fotos" --include-fine-labels
+
+# Merge: vorhandene yolo:* Labels bleiben erhalten und neue Treffer kommen dazu
+python src/main.py index --root "D:/Fotos" --include-fine-labels --merge-fine-labels
+```
+
+Hinweis: `--merge-fine-labels` wirkt nur zusammen mit `--include-fine-labels`.
+
+Die feinen Labels werden mit Präfix `yolo:` gespeichert (z. B. `yolo:cat`, `yolo:chair`) und ermöglichen später:
+- Nach einzelnen Klassen suchen: `cat`, `dog`, `chair`, `car`
+- Kombiniert mit anderen Filtern: `cat person:Maria`
+
+### Separate YOLO-Tier-/Objekt-Erkennung
+```bash
+# CLI-Tool: Losgelöst ohne DB-Indexierung
+python src/main.py detect-objects "D:/Fotos/testbild.jpg"
+python src/main.py detect-objects "D:/Fotos/urlaub" --model yolov8m.pt --confidence 0.2
+
+# Nur bestimmte Klassen betrachten
+python src/main.py detect-objects "D:/Fotos/haustiere" --labels cat,dog,bird
+python src/main.py detect-objects "D:/Fotos/wohnung" --labels chair,couch,tv,cell phone
+
+# JSON-Bericht schreiben
+python src/main.py detect-objects "D:/Fotos" --json --output data/cache/detections.json
+```
+
+Die Ausgabe enthält pro Bild:
+- die feinen YOLO-Klassen (z. B. `cat`, `dog`, `chair`, `car`)
+- eine grobe Art (`animal`, `object`, optional `person`)
+- eine Gruppe (`pet`, `vehicle`, `furniture`, `electronics`, ...)
+- Confidence und Bounding Box pro Treffer
+
+### Web-UI: Objekt-Erkennung im Admin-Dashboard
+
+Im Admin-Dashboard (`http://localhost:5000/admin`) kannst du jetzt:
+- **Objekt-Erkennungs-Job starten** – alle Bilder analysieren
+- Parameter einstellen:
+  - YOLO-Modell (z. B. `yolov8m.pt`)
+  - Konfidenzschwelle (0..1)
+  - Device (`cpu`, `0` für GPU, etc.)
+  - Klassenfilter (kommagetrennt, z. B. `cat,dog,bird`)
+  - Optional: `person`-Klasse einschließen
+- Für die **Indexierung** kannst du zusätzlich setzen:
+  - **Feine YOLO-Labels speichern**
+  - **Feine Labels beim Re-Index mergen** (alte `yolo:*` behalten)
+- Im YOLO-Tab kannst du eine **Fine-Label-Liste (CSV)** pflegen (`yolo_label_allowlist_csv`).
+  Nur diese Klassen werden als `yolo:*` gespeichert.
+- **Echtzeit-Progress**: Anzahl verarbeiteter Bilder und Treffer
+- **Job-Verwaltung**: Status-Überwachung, optional Abbruch
+
+### Fehlende Fine-Labels nachziehen (ohne Full Re-Index)
+
+Im Admin-Bereich gibt es die Operation **"Fine-Labels nachziehen"**.
+Sie prüft bereits indexierte Bilder und ergänzt nur dort `yolo:*`, wo noch keine Fine-Labels vorhanden sind.
+
+Hinweis: Die Standard-Modelle `yolov8n.pt` / `yolov8m.pt` erkennen die üblichen COCO-Klassen.
+Für echte Arten auf Spezies-Niveau (z. B. Tiger, Fuchs, Reh, verschiedene Vogelarten) brauchst du ein passendes Custom-Modell oder Fine-Tuning.
 
 ### Album-Management
 ```

@@ -73,6 +73,26 @@
           </div>
         </div>
 
+        <div class="form-row">
+          <div class="form-group checkbox">
+            <input
+              type="checkbox"
+              id="include-fine-labels-check"
+              class="form-control"
+            />
+            <label for="include-fine-labels-check">Feine YOLO-Labels speichern (z.B. yolo:cat)</label>
+          </div>
+
+          <div class="form-group checkbox">
+            <input
+              type="checkbox"
+              id="merge-fine-labels-check"
+              class="form-control"
+            />
+            <label for="merge-fine-labels-check">Feine Labels beim Re-Index mergen (alte yolo:* behalten)</label>
+          </div>
+        </div>
+
         <div class="form-group">
           <label for="phash-threshold-input">Phash-Schwelle (0-64):</label>
           <input
@@ -130,6 +150,17 @@
             <option value="cpu">CPU</option>
           </select>
           <small>GPU ist deutlich schneller.</small>
+        </div>
+
+        <div class="form-group">
+          <label for="yolo-label-allowlist-input">Fine-Label-Liste (CSV):</label>
+          <textarea
+            id="yolo-label-allowlist-input"
+            class="photo-roots-textarea"
+            rows="3"
+            placeholder="z.B. Car, Bicycle, Dog, Cat, Bird"
+          ></textarea>
+          <small>Nur diese YOLO-Klassen werden als `yolo:*` gespeichert (Groß/Kleinschreibung egal).</small>
         </div>
       </div>
 
@@ -311,6 +342,17 @@
           <button
             class="btn btn-secondary"
             onclick="startRematchPersons()"
+          >
+            Starten
+          </button>
+        </div>
+
+        <div class="operation-card">
+          <h3>🏷️ Fine-Labels nachziehen</h3>
+          <p>Ergänzt fehlende `yolo:*` Labels für bereits indexierte Bilder, ohne kompletten Re-Index.</p>
+          <button
+            class="btn btn-secondary"
+            onclick="startBackfillFineLabels()"
           >
             Starten
           </button>
@@ -894,6 +936,8 @@ function collectAdminConfig() {
     force_reindex: document.getElementById('force-reindex-check').checked,
     index_workers: parseInt(document.getElementById('index-workers-select').value),
     near_duplicates: document.getElementById('near-duplicates-check').checked,
+    include_fine_labels: document.getElementById('include-fine-labels-check').checked,
+    merge_fine_labels: document.getElementById('merge-fine-labels-check').checked,
     phash_threshold: parseInt(document.getElementById('phash-threshold-input').value),
     rematch_workers: parseInt(document.getElementById('rematch-workers-select').value),
     rematch_order: document.getElementById('rematch-order-select').value || 'mixed',
@@ -927,6 +971,8 @@ function applyAdminConfig(config) {
   document.getElementById('force-reindex-check').checked = Boolean(config.force_reindex);
   document.getElementById('index-workers-select').value = String(config.index_workers || 1);
   document.getElementById('near-duplicates-check').checked = Boolean(config.near_duplicates);
+  document.getElementById('include-fine-labels-check').checked = Boolean(config.include_fine_labels);
+  document.getElementById('merge-fine-labels-check').checked = Boolean(config.merge_fine_labels);
   document.getElementById('phash-threshold-input').value = String(config.phash_threshold ?? 6);
   document.getElementById('rematch-workers-select').value = String(config.rematch_workers || 1);
   document.getElementById('rematch-order-select').value = String(config.rematch_order || 'mixed');
@@ -996,6 +1042,8 @@ function setupConfigAutoSave() {
     'index-workers-select',
     'force-reindex-check',
     'near-duplicates-check',
+    'include-fine-labels-check',
+    'merge-fine-labels-check',
     'phash-threshold-input',
     'rematch-workers-select',
     'rematch-order-select',
@@ -1158,6 +1206,38 @@ async function startRematchPersons() {
   }
 }
 
+async function startBackfillFineLabels() {
+  const config = collectAdminConfig();
+  const roots = config.photo_roots;
+  if (!roots.length) {
+    (window.showToast || window.alert)('Bitte mindestens einen Foto-Pfad eingeben', 'info', 2400);
+    return;
+  }
+
+  try {
+    await saveAdminConfig({
+      yolo_label_allowlist_csv: document.getElementById('yolo-label-allowlist-input').value,
+    });
+
+    const response = await fetch('/api/admin/config/start-backfill-fine-labels', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ photo_roots: roots }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      (window.showToast || window.alert)(`Fehler: ${error.error}`, 'error', 3200);
+      return;
+    }
+
+    const data = await response.json();
+    showJobProgress(data.job_id);
+  } catch (err) {
+    (window.showToast || window.alert)(`Fehler: ${err.message}`, 'error', 3200);
+  }
+}
+
 function showJobProgress(jobId) {
   currentJobId = jobId;
   document.getElementById('job-progress-modal').classList.add('active');
@@ -1247,6 +1327,7 @@ function getJobTypeLabel(jobType) {
     'full_index': '🔄 Full Indexierung',
     'exif_update': '📊 EXIF-Update',
     'rematch_persons': '👤 Rematch Personen',
+    'backfill_fine_labels': '🏷️ Fine-Labels nachziehen',
     'train_reference_person': '🧠 Person anlernen',
   };
   return labels[jobType] || jobType;
@@ -1286,6 +1367,7 @@ function collectQualitySettings() {
     yolo_model: document.getElementById('yolo-model-input').value,
     yolo_confidence: parseFloat(document.getElementById('yolo-confidence-input').value),
     yolo_device: document.getElementById('yolo-device-input').value,
+    yolo_label_allowlist_csv: document.getElementById('yolo-label-allowlist-input').value,
     person_backend: document.getElementById('person-backend-db-select').value || 'auto',
     person_threshold: parseFloat(document.getElementById('person-threshold-input').value),
     person_top_k: parseInt(document.getElementById('person-topk-input').value),
@@ -1307,6 +1389,7 @@ function applyQualitySettings(config) {
   if (config.yolo_model) document.getElementById('yolo-model-input').value = config.yolo_model;
   if (config.yolo_confidence !== undefined) document.getElementById('yolo-confidence-input').value = config.yolo_confidence;
   if (config.yolo_device) document.getElementById('yolo-device-input').value = config.yolo_device;
+  if (config.yolo_label_allowlist_csv !== undefined) document.getElementById('yolo-label-allowlist-input').value = config.yolo_label_allowlist_csv;
   if (config.person_backend !== undefined) setPersonBackendControls(config.person_backend);
   if (config.person_threshold !== undefined) document.getElementById('person-threshold-input').value = config.person_threshold;
   if (config.person_top_k) document.getElementById('person-topk-input').value = config.person_top_k;
@@ -1349,6 +1432,7 @@ function setupQualitySettingsAutoSave() {
     'yolo-model-input',
     'yolo-confidence-input',
     'yolo-device-input',
+    'yolo-label-allowlist-input',
     'person-backend-db-select',
     'person-threshold-input',
     'person-topk-input',

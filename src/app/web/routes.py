@@ -1536,6 +1536,8 @@ def api_admin_start_index():
                 "index_workers": data.get("index_workers", 1),
                 "near_duplicates": data.get("near_duplicates", False),
                 "phash_threshold": data.get("phash_threshold", 6),
+                "include_fine_labels": bool(data.get("include_fine_labels", False)),
+                "merge_fine_labels": bool(data.get("merge_fine_labels", False)),
             },
         )
 
@@ -1549,6 +1551,8 @@ def api_admin_start_index():
             index_workers=data.get("index_workers", 1),
             near_duplicates=data.get("near_duplicates", False),
             phash_threshold=data.get("phash_threshold", 6),
+            include_fine_labels=bool(data.get("include_fine_labels", False)),
+            merge_fine_labels=bool(data.get("merge_fine_labels", False)),
         )
 
         return jsonify({"job_id": job_id, "status": "started"})
@@ -1614,6 +1618,70 @@ def api_admin_start_rematch():
             order_mode=requested_order,
         )
         return jsonify({"job_id": job_id, "status": "started", "workers": safe_workers, "max_workers": max_workers, "order_mode": requested_order})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@web_blueprint.post("/api/admin/config/start-detect-objects")
+def api_admin_start_detect_objects():
+    """Startet Objekt-Erkennungs-Job."""
+    from .admin_jobs import get_job_manager
+    from .admin_service import AdminService
+
+    try:
+        data = request.get_json() or {}
+        photo_roots = data.get("photo_roots", [])
+        if not photo_roots or not isinstance(photo_roots, list):
+            return jsonify({"error": "photo_roots ist erforderlich und muss eine Liste sein"}), 400
+
+        app_config: AppConfig = current_app.config.get("APP_CONFIG")
+        db_path: Path = current_app.config["DB_PATH"]
+        ensure_schema(db_path)
+
+        model_name = data.get("model_name")
+        confidence = data.get("confidence")
+        device = data.get("device")
+        labels_filter = data.get("labels_filter")
+        include_person = bool(data.get("include_person", False))
+
+        job_manager = get_job_manager()
+        admin_service = AdminService(app_config, job_manager)
+
+        job_id = admin_service.start_detect_objects(
+            photo_roots=photo_roots,
+            model_name=model_name,
+            confidence=confidence,
+            device=device,
+            labels_filter=labels_filter,
+            include_person=include_person,
+        )
+        return jsonify({"job_id": job_id, "status": "started"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@web_blueprint.post("/api/admin/config/start-backfill-fine-labels")
+def api_admin_start_backfill_fine_labels():
+    """Startet Backfill-Job für fehlende Fine-Labels."""
+    from .admin_jobs import get_job_manager
+    from .admin_service import AdminService
+
+    try:
+        data = request.get_json() or {}
+        db_path: Path = current_app.config["DB_PATH"]
+        ensure_schema(db_path)
+
+        config = get_admin_config(db_path)
+        photo_roots = data.get("photo_roots") or config.get("photo_roots") or []
+        if not photo_roots or not isinstance(photo_roots, list):
+            return jsonify({"error": "Keine Foto-Pfade konfiguriert"}), 400
+
+        app_config: AppConfig = current_app.config.get("APP_CONFIG")
+        job_manager = get_job_manager()
+        admin_service = AdminService(app_config, job_manager)
+
+        job_id = admin_service.start_backfill_fine_labels(photo_roots=[str(root) for root in photo_roots])
+        return jsonify({"job_id": job_id, "status": "started"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

@@ -1,5 +1,7 @@
 import argparse
+import json
 import os
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -7,9 +9,17 @@ from tqdm import tqdm
 
 from .config import AppConfig
 from .doctor import run_doctor
-from .detectors.labels import infer_labels_from_path
+from .detectors.labels import (
+    configure_yolo_runtime,
+    get_supported_yolo_classes,
+    infer_labels_from_path,
+    infer_fine_yolo_labels,
+    summarize_object_detections,
+)
 from .index.store import (
     ensure_schema,
+    get_admin_config,
+    get_photo_labels_map,
     get_photo_metadata_map,
     phash_of_file,
     resolve_duplicate_marker,
@@ -63,6 +73,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Embedding-Backend fuer Personenmatching",
     )
 
+    index_parser.add_argument(
+        "--include-fine-labels",
+        action="store_true",
+        help="Speichert auch feine YOLO-Klassenlabels (z.B. 'yolo:cat', 'yolo:chair') zusätzlich zu groben Labels",
+    )
+    index_parser.add_argument(
+        "--merge-fine-labels",
+        action="store_true",
+        help="Behält bestehende 'yolo:*' Labels und ergänzt neue Treffer (nur mit --include-fine-labels)",
+    )
+
     enroll_parser = subparsers.add_parser("enroll", help="Referenzbilder fuer eine Person einlernen")
     enroll_parser.add_argument("--name", required=True, help="Personenname")
     enroll_parser.add_argument("--root", required=True, help="Ordner mit Referenzbildern")
@@ -78,6 +99,57 @@ def _build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument("--query", required=True, help="Suchtext")
     search_parser.add_argument("--db", default=None, help="Pfad zur SQLite-DB")
     search_parser.add_argument("--limit", type=int, default=20, help="Maximale Treffer")
+
+    detect_parser = subparsers.add_parser(
+        "detect-objects",
+        help="Detaillierte Tier-/Objekt-Erkennung via YOLO (ohne Indexierung)",
+    )
+    detect_parser.add_argument(
+        "inputs",
+        nargs="+",
+        help="Bilddatei(en) oder Ordner mit Bildern",
+    )
+    detect_parser.add_argument(
+        "--db",
+        default=None,
+        help="Optional: SQLite-DB zum Laden gespeicherter YOLO-Einstellungen",
+    )
+    detect_parser.add_argument(
+        "--model",
+        default=None,
+        help="YOLO-Modellname oder Pfad (z.B. yolov8n.pt, yolov8m.pt)",
+    )
+    detect_parser.add_argument(
+        "--confidence",
+        type=float,
+        default=None,
+        help="Konfidenzschwelle 0..1 (überschreibt DB/Default)",
+    )
+    detect_parser.add_argument(
+        "--device",
+        default=None,
+        help='Device wie "cpu", "0" oder "auto"',
+    )
+    detect_parser.add_argument(
+        "--labels",
+        default=None,
+        help="Kommagetrennte YOLO-Klassen filtern, z.B. cat,dog,car,chair",
+    )
+    detect_parser.add_argument(
+        "--include-person",
+        action="store_true",
+        help="Nimmt auch die YOLO-Klasse 'person' in die Objektausgabe auf (ohne Personen-Identifikation)",
+    )
+    detect_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Ausgabe als JSON statt als Textbericht",
+    )
+    detect_parser.add_argument(
+        "--output",
+        default=None,
+        help="Optionaler Dateipfad für den Bericht (TXT oder JSON)",
+    )
 
     person_search_parser = subparsers.add_parser(
         "search-person", help="Treffer zu einer bekannten Person anzeigen"
@@ -199,6 +271,8 @@ def _index_command(
     index_workers: int = 1,
     near_duplicates: bool = False,
     phash_threshold: int = 6,
+    include_fine_labels: bool = False,
+    merge_fine_labels: bool = False,
 ) -> int:
     from .persons.embeddings import initialize_insightface_settings
     from .detectors.labels import initialize_yolo_settings
@@ -212,9 +286,39 @@ def _index_command(
 
     safe_workers = max(1, index_workers)
     safe_threshold = max(0, min(64, phash_threshold))
+    existing_labels_by_path: dict[str, list[str]] = {}
+    fine_label_filter: set[str] | None = None
+
+    if merge_fine_labels and not include_fine_labels:
+        print("Hinweis: --merge-fine-labels wird ohne --include-fine-labels ignoriert.")
+
+    if include_fine_labels:
+        try:
+            admin_config = get_admin_config(db_path)
+            raw_csv = str(admin_config.get("yolo_label_allowlist_csv", "")).strip()
+            parsed = {
+                label.strip().lower()
+                for label in raw_csv.split(",")
+                if label.strip()
+            }
+            fine_label_filter = parsed or None
+        except Exception:
+            fine_label_filter = None
 
     def prepare_record(record):
         labels = set(infer_labels_from_path(record.path))
+        
+        if include_fine_labels:
+            if merge_fine_labels:
+                existing_labels = existing_labels_by_path.get(str(record.path), [])
+                labels.update(label for label in existing_labels if label.startswith("yolo:"))
+            fine_labels = infer_fine_yolo_labels(
+                record.path,
+                include_person=False,
+                label_filter=fine_label_filter,
+            )
+            labels.update(fine_labels)
+        
         person_matches, person_count = match_persons_for_photo(
             db_path=db_path,
             photo_path=record.path,
@@ -266,6 +370,12 @@ def _index_command(
                     total_skipped += 1
                     continue
             to_process.append(record)
+
+        existing_labels_by_path = (
+            get_photo_labels_map(db_path=db_path, paths=[record.path for record in to_process])
+            if include_fine_labels and merge_fine_labels
+            else {}
+        )
 
         processed_for_root = 0
         duplicates_for_root = 0
@@ -398,6 +508,158 @@ def _search_command(config: AppConfig, query: str, custom_db_path: str | None, l
         labels = ", ".join(item.labels) if item.labels else "-"
         print(f"{index:>2}. {item.path} | labels: {labels}")
 
+    return 0
+
+
+def _parse_label_filter(raw_labels: str | None) -> set[str] | None:
+    if not raw_labels:
+        return None
+    labels = {part.strip().lower() for part in raw_labels.split(",") if part.strip()}
+    return labels or None
+
+
+def _collect_detection_targets(raw_inputs: list[str], supported_extensions: tuple[str, ...]) -> list[Path]:
+    targets: list[Path] = []
+    seen: set[str] = set()
+    supported = {extension.lower() for extension in supported_extensions}
+
+    for raw_input in raw_inputs:
+        path = Path(raw_input)
+        if path.is_dir():
+            for record in scan_images(path, supported_extensions=supported_extensions):
+                normalized = str(record.path.resolve())
+                if normalized in seen:
+                    continue
+                seen.add(normalized)
+                targets.append(record.path)
+            continue
+
+        if path.is_file():
+            if path.suffix.lower() not in supported:
+                print(f"Überspringe nicht unterstützte Datei: {path}", file=sys.stderr)
+                continue
+
+            normalized = str(path.resolve())
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            targets.append(path)
+            continue
+
+        print(f"Pfad nicht gefunden oder kein Bild/Ordner: {path}", file=sys.stderr)
+
+    return targets
+
+
+def _format_detection_report(summaries) -> str:
+    lines: list[str] = []
+    for index, summary in enumerate(summaries, start=1):
+        if index > 1:
+            lines.append("")
+
+        labels = ", ".join(summary.labels) if summary.labels else "-"
+        label_counts = ", ".join(
+            f"{label}={count}" for label, count in summary.counts_by_label.items()
+        ) or "-"
+        kind_counts = ", ".join(
+            f"{label}={count}" for label, count in summary.counts_by_kind.items()
+        ) or "-"
+        group_counts = ", ".join(
+            f"{label}={count}" for label, count in summary.counts_by_group.items()
+        ) or "-"
+
+        lines.append(f"[{index}] {summary.path}")
+        lines.append(
+            f"  Modell: {summary.model_name} | Device: {summary.device} | Confidence: {summary.confidence_threshold:.2f}"
+        )
+        lines.append(f"  Klassen: {labels}")
+        lines.append(f"  Counts nach Klasse: {label_counts}")
+        lines.append(f"  Counts nach Art: {kind_counts}")
+        lines.append(f"  Counts nach Gruppe: {group_counts}")
+
+        if not summary.detections:
+            lines.append("  Keine Treffer über der Konfidenzschwelle.")
+            continue
+
+        lines.append("  Treffer:")
+        for detection in summary.detections:
+            bbox_text = (
+                f" @ {list(detection.bbox)}"
+                if detection.bbox is not None
+                else ""
+            )
+            lines.append(
+                f"    - {detection.label} | art={detection.kind} | gruppe={detection.group} | conf={detection.confidence:.3f}{bbox_text}"
+            )
+
+    return "\n".join(lines)
+
+
+def _detect_objects_command(
+    config: AppConfig,
+    raw_inputs: list[str],
+    custom_db_path: str | None,
+    model_name: str | None,
+    confidence: float | None,
+    device: str | None,
+    raw_labels: str | None,
+    include_person: bool,
+    json_output: bool,
+    output_path: str | None,
+) -> int:
+    from .detectors.labels import initialize_yolo_settings
+
+    if custom_db_path is not None:
+        initialize_yolo_settings(config.resolve_db_path(custom_db_path))
+
+    configure_yolo_runtime(model_name=model_name, confidence=confidence, device=device)
+
+    supported_classes = get_supported_yolo_classes()
+    if not supported_classes:
+        print(
+            "YOLO konnte nicht geladen werden. Bitte Modellpfad, Device und installierte Abhängigkeiten prüfen.",
+            file=sys.stderr,
+        )
+        return 1
+
+    label_filter = _parse_label_filter(raw_labels)
+    if label_filter is not None:
+        unknown = sorted(label_filter.difference(set(supported_classes)))
+        if unknown:
+            print(
+                "Hinweis: Diese Klassen kennt das geladene Modell nicht oder anders benannt: "
+                + ", ".join(unknown),
+                file=sys.stderr,
+            )
+
+    targets = _collect_detection_targets(raw_inputs, supported_extensions=config.supported_extensions)
+    if not targets:
+        print("Keine unterstützten Bilddateien zum Analysieren gefunden.", file=sys.stderr)
+        return 1
+
+    summaries = [
+        summarize_object_detections(
+            path,
+            include_person=include_person,
+            label_filter=label_filter,
+        )
+        for path in targets
+    ]
+
+    rendered_output = (
+        json.dumps([summary.to_dict() for summary in summaries], ensure_ascii=False, indent=2)
+        if json_output
+        else _format_detection_report(summaries)
+    )
+
+    if output_path:
+        target_path = Path(output_path)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text(rendered_output, encoding="utf-8")
+        print(f"Bericht geschrieben: {target_path}")
+        return 0
+
+    print(rendered_output)
     return 0
 
 
@@ -654,6 +916,8 @@ def main() -> int:
             index_workers=args.index_workers,
             near_duplicates=args.near_duplicates,
             phash_threshold=args.phash_threshold,
+            include_fine_labels=args.include_fine_labels,
+            merge_fine_labels=args.merge_fine_labels,
         )
     if args.command == "enroll":
         return _enroll_command(
@@ -669,6 +933,19 @@ def main() -> int:
             query=args.query,
             custom_db_path=args.db,
             limit=args.limit,
+        )
+    if args.command == "detect-objects":
+        return _detect_objects_command(
+            config=config,
+            raw_inputs=args.inputs,
+            custom_db_path=args.db,
+            model_name=args.model,
+            confidence=args.confidence,
+            device=args.device,
+            raw_labels=args.labels,
+            include_person=args.include_person,
+            json_output=args.json,
+            output_path=args.output,
         )
     if args.command == "search-person":
         return _search_person_command(

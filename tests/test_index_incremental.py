@@ -1,3 +1,4 @@
+import json
 import sys
 import sqlite3
 import tempfile
@@ -28,6 +29,9 @@ class IncrementalIndexTests(unittest.TestCase):
             self.assertEqual(defaults["photo_roots"], [])
             self.assertEqual(defaults["index_workers"], 1)
             self.assertEqual(defaults["phash_threshold"], 6)
+            self.assertFalse(bool(defaults["include_fine_labels"]))
+            self.assertFalse(bool(defaults["merge_fine_labels"]))
+            self.assertTrue(isinstance(defaults["yolo_label_allowlist_csv"], str))
 
             saved = save_admin_config(
                 db_path,
@@ -249,6 +253,136 @@ class IncrementalIndexTests(unittest.TestCase):
 
                 metadata = get_photo_metadata_map(db_path=db_path, paths=[image_path])
                 self.assertTrue(metadata[str(image_path)][2])
+            finally:
+                cli_module.infer_labels_from_path = original_infer
+                cli_module.match_persons_for_photo = original_match
+
+    def test_index_merge_fine_labels_keeps_existing_yolo_labels(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            workspace = Path(tmp_dir)
+            photos_dir = workspace / "photos"
+            photos_dir.mkdir(parents=True, exist_ok=True)
+
+            image_path = photos_dir / "merge.jpg"
+            image = Image.new("RGB", (80, 80), color=(140, 60, 90))
+            image.save(image_path)
+
+            config = AppConfig.from_workspace(workspace_root=workspace)
+            db_path = config.resolve_db_path()
+            ensure_schema(db_path)
+
+            stat = image_path.stat()
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO photos (
+                        path, size_bytes, modified_ts, sha1, labels_json, search_blob, person_count, exif_checked
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                    """,
+                    (
+                        str(image_path),
+                        stat.st_size,
+                        stat.st_mtime,
+                        "merge-sha1",
+                        '["animal", "yolo:cat", "yolo:dog"]',
+                        "animal yolo:cat yolo:dog",
+                        0,
+                    ),
+                )
+
+            original_infer = cli_module.infer_labels_from_path
+            original_fine = cli_module.infer_fine_yolo_labels
+            original_match = cli_module.match_persons_for_photo
+
+            cli_module.infer_labels_from_path = lambda path: ["animal"]
+            cli_module.infer_fine_yolo_labels = lambda path, include_person=False, label_filter=None: {"yolo:bird"}
+            cli_module.match_persons_for_photo = lambda *args, **kwargs: ([], 0)
+
+            try:
+                rc = _index_command(
+                    config=config,
+                    roots=[photos_dir],
+                    custom_db_path=None,
+                    person_backend=None,
+                    include_fine_labels=True,
+                    merge_fine_labels=True,
+                )
+                self.assertEqual(rc, 0)
+
+                with sqlite3.connect(db_path) as conn:
+                    row = conn.execute(
+                        "SELECT labels_json FROM photos WHERE path = ?",
+                        (str(image_path),),
+                    ).fetchone()
+
+                self.assertIsNotNone(row)
+                labels = set(json.loads(row[0]))
+                self.assertIn("yolo:cat", labels)
+                self.assertIn("yolo:dog", labels)
+                self.assertIn("yolo:bird", labels)
+            finally:
+                cli_module.infer_labels_from_path = original_infer
+                cli_module.infer_fine_yolo_labels = original_fine
+                cli_module.match_persons_for_photo = original_match
+
+    def test_index_merge_flag_is_ignored_without_include_fine_labels(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            workspace = Path(tmp_dir)
+            photos_dir = workspace / "photos"
+            photos_dir.mkdir(parents=True, exist_ok=True)
+
+            image_path = photos_dir / "merge_ignored.jpg"
+            Image.new("RGB", (64, 64), color=(30, 60, 90)).save(image_path)
+
+            config = AppConfig.from_workspace(workspace_root=workspace)
+            db_path = config.resolve_db_path()
+            ensure_schema(db_path)
+
+            stat = image_path.stat()
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO photos (
+                        path, size_bytes, modified_ts, sha1, labels_json, search_blob, person_count, exif_checked
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                    """,
+                    (
+                        str(image_path),
+                        stat.st_size,
+                        stat.st_mtime,
+                        "merge-ignored-sha1",
+                        '["animal", "yolo:cat"]',
+                        "animal yolo:cat",
+                        0,
+                    ),
+                )
+
+            original_infer = cli_module.infer_labels_from_path
+            original_match = cli_module.match_persons_for_photo
+            cli_module.infer_labels_from_path = lambda path: ["animal"]
+            cli_module.match_persons_for_photo = lambda *args, **kwargs: ([], 0)
+
+            try:
+                rc = _index_command(
+                    config=config,
+                    roots=[photos_dir],
+                    custom_db_path=None,
+                    person_backend=None,
+                    include_fine_labels=False,
+                    merge_fine_labels=True,
+                    force_reindex=True,
+                )
+                self.assertEqual(rc, 0)
+
+                with sqlite3.connect(db_path) as conn:
+                    row = conn.execute(
+                        "SELECT labels_json FROM photos WHERE path = ?",
+                        (str(image_path),),
+                    ).fetchone()
+                self.assertIsNotNone(row)
+                labels = set(json.loads(row[0]))
+                self.assertIn("animal", labels)
+                self.assertNotIn("yolo:cat", labels)
             finally:
                 cli_module.infer_labels_from_path = original_infer
                 cli_module.match_persons_for_photo = original_match

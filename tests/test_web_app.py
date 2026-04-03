@@ -51,6 +51,7 @@ class WebAppTests(unittest.TestCase):
                 "yolo_model": "yolov8m.pt",
                 "yolo_confidence": 0.4,
                 "yolo_device": "cpu",
+                "yolo_label_allowlist_csv": "Car,Dog,Cat,Bird",
                 "person_threshold": 0.52,
                 "person_top_k": 5,
                 "person_full_image_fallback": False,
@@ -75,6 +76,7 @@ class WebAppTests(unittest.TestCase):
             self.assertEqual(saved["yolo_model"], "yolov8m.pt")
             self.assertAlmostEqual(float(saved["yolo_confidence"]), 0.4, places=6)
             self.assertEqual(saved["yolo_device"], "cpu")
+            self.assertEqual(saved["yolo_label_allowlist_csv"], "Car,Dog,Cat,Bird")
             self.assertAlmostEqual(float(saved["person_threshold"]), 0.52, places=6)
             self.assertEqual(int(saved["person_top_k"]), 5)
             self.assertFalse(bool(saved["person_full_image_fallback"]))
@@ -100,6 +102,7 @@ class WebAppTests(unittest.TestCase):
             self.assertEqual(loaded["yolo_model"], "yolov8m.pt")
             self.assertAlmostEqual(float(loaded["yolo_confidence"]), 0.4, places=6)
             self.assertEqual(loaded["yolo_device"], "cpu")
+            self.assertEqual(loaded["yolo_label_allowlist_csv"], "Car,Dog,Cat,Bird")
             self.assertAlmostEqual(float(loaded["person_threshold"]), 0.52, places=6)
             self.assertEqual(int(loaded["person_top_k"]), 5)
             self.assertFalse(bool(loaded["person_full_image_fallback"]))
@@ -194,6 +197,95 @@ class WebAppTests(unittest.TestCase):
             self.assertEqual(config_payload["person_backend"], "histogram")
             self.assertEqual(int(config_payload["rematch_workers"]), 6)
             self.assertEqual(config_payload["rematch_order"], "random")
+
+    def test_admin_start_index_passes_fine_label_flags(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            workspace = Path(tmp_dir)
+            db_path = workspace / "data" / "photo_index.db"
+            cache_dir = workspace / "data" / "cache"
+            photos_dir = workspace / "photos"
+            photos_dir.mkdir(parents=True, exist_ok=True)
+            ensure_schema(db_path)
+
+            app = create_app(
+                app_config=AppConfig.from_workspace(workspace_root=workspace),
+                custom_db_path=str(db_path),
+                custom_cache_dir=str(cache_dir),
+            )
+            client = app.test_client()
+
+            with patch(
+                "src.app.web.admin_service.AdminService.start_full_index",
+                return_value="index_test_1",
+            ) as mocked_start:
+                response = client.post(
+                    "/api/admin/config/start-index",
+                    json={
+                        "photo_roots": [str(photos_dir)],
+                        "person_backend": "auto",
+                        "force_reindex": False,
+                        "index_workers": 1,
+                        "near_duplicates": False,
+                        "phash_threshold": 6,
+                        "include_fine_labels": True,
+                        "merge_fine_labels": True,
+                    },
+                )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.get_json()
+            assert payload is not None
+            self.assertEqual(payload["job_id"], "index_test_1")
+
+            mocked_start.assert_called_once_with(
+                photo_roots=[str(photos_dir)],
+                person_backend="auto",
+                force_reindex=False,
+                index_workers=1,
+                near_duplicates=False,
+                phash_threshold=6,
+                include_fine_labels=True,
+                merge_fine_labels=True,
+            )
+
+    def test_admin_start_backfill_fine_labels_route_starts_job(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            workspace = Path(tmp_dir)
+            db_path = workspace / "data" / "photo_index.db"
+            cache_dir = workspace / "data" / "cache"
+            photos_dir = workspace / "photos"
+            photos_dir.mkdir(parents=True, exist_ok=True)
+            ensure_schema(db_path)
+
+            app = create_app(
+                app_config=AppConfig.from_workspace(workspace_root=workspace),
+                custom_db_path=str(db_path),
+                custom_cache_dir=str(cache_dir),
+            )
+            client = app.test_client()
+
+            client.post(
+                "/api/admin/config",
+                json={
+                    "photo_roots": [str(photos_dir)],
+                    "yolo_label_allowlist_csv": "Car,Dog,Cat,Bird",
+                },
+            )
+
+            with patch(
+                "src.app.web.admin_service.AdminService.start_backfill_fine_labels",
+                return_value="backfill_test_1",
+            ) as mocked_start:
+                response = client.post(
+                    "/api/admin/config/start-backfill-fine-labels",
+                    json={},
+                )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.get_json()
+            assert payload is not None
+            self.assertEqual(payload["job_id"], "backfill_test_1")
+            mocked_start.assert_called_once_with(photo_roots=[str(photos_dir)])
 
     def test_api_search_pagination_and_thumbnail_cache(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:

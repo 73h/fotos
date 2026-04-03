@@ -10,14 +10,17 @@ from pathlib import Path
 from typing import Optional
 
 from ..config import AppConfig
-from ..detectors.labels import infer_labels_from_path
+from ..detectors.labels import infer_fine_yolo_labels, infer_labels_from_path
 from ..index.store import (
     ensure_schema,
+    get_admin_config,
+    get_photo_labels_map,
     get_photo_metadata_map,
     phash_of_file,
     resolve_duplicate_marker,
     sha1_of_file,
     update_exif_only,
+    update_photo_labels_only,
     update_person_labels,
     upsert_photo,
 )
@@ -44,6 +47,8 @@ class AdminService:
         index_workers: int = 1,
         near_duplicates: bool = False,
         phash_threshold: int = 6,
+        include_fine_labels: bool = False,
+        merge_fine_labels: bool = False,
     ) -> str:
         """Startet Full-Index-Job und gibt Job-ID zurück."""
         job_id = f"index_{uuid.uuid4().hex[:8]}"
@@ -59,6 +64,8 @@ class AdminService:
                     index_workers=index_workers,
                     near_duplicates=near_duplicates,
                     phash_threshold=phash_threshold,
+                    include_fine_labels=include_fine_labels,
+                    merge_fine_labels=merge_fine_labels,
                 )
             except Exception as e:
                 raise Exception(f"Index-Fehler: {str(e)}")
@@ -104,6 +111,50 @@ class AdminService:
         self.job_manager.run_job_async(job_id, _do_rematch)
         return job_id
 
+    def start_detect_objects(
+        self,
+        photo_roots: list[str],
+        model_name: Optional[str] = None,
+        confidence: Optional[float] = None,
+        device: Optional[str] = None,
+        labels_filter: Optional[str] = None,
+        include_person: bool = False,
+    ) -> str:
+        """Startet Objekt-Erkennungs-Job und gibt Job-ID zurück."""
+        job_id = f"detect_{uuid.uuid4().hex[:8]}"
+        job = self.job_manager.create_job(job_id, "detect_objects")
+
+        def _do_detect(progress_job):
+            try:
+                self._execute_detect_objects(
+                    job=progress_job,
+                    photo_roots=photo_roots,
+                    model_name=model_name,
+                    confidence=confidence,
+                    device=device,
+                    labels_filter=labels_filter,
+                    include_person=include_person,
+                )
+            except Exception as e:
+                raise Exception(f"Objekt-Erkennungs-Fehler: {str(e)}")
+
+        self.job_manager.run_job_async(job_id, _do_detect)
+        return job_id
+
+    def start_backfill_fine_labels(self, photo_roots: list[str]) -> str:
+        """Startet Backfill-Job für fehlende Fine-Labels."""
+        job_id = f"backfill_fine_{uuid.uuid4().hex[:8]}"
+        self.job_manager.create_job(job_id, "backfill_fine_labels")
+
+        def _do_backfill(progress_job):
+            try:
+                self._execute_backfill_fine_labels(job=progress_job, photo_roots=photo_roots)
+            except Exception as e:
+                raise Exception(f"Fine-Label-Backfill-Fehler: {str(e)}")
+
+        self.job_manager.run_job_async(job_id, _do_backfill)
+        return job_id
+
     def _execute_full_index(
         self,
         job: JobProgress,
@@ -113,6 +164,8 @@ class AdminService:
         index_workers: int = 1,
         near_duplicates: bool = False,
         phash_threshold: int = 6,
+        include_fine_labels: bool = False,
+        merge_fine_labels: bool = False,
     ) -> None:
         """Führt Full-Index aus."""
         from ..detectors.labels import initialize_yolo_settings
@@ -127,11 +180,34 @@ class AdminService:
 
         safe_workers = max(1, index_workers)
         safe_threshold = max(0, min(64, phash_threshold))
+        merge_fine_labels = bool(merge_fine_labels and include_fine_labels)
+        existing_labels_by_path: dict[str, list[str]] = {}
+        fine_label_filter: set[str] | None = None
+
+        if include_fine_labels:
+            admin_config = get_admin_config(db_path)
+            raw_csv = str(admin_config.get("yolo_label_allowlist_csv", "")).strip()
+            parsed = {
+                label.strip().lower()
+                for label in raw_csv.split(",")
+                if label.strip()
+            }
+            fine_label_filter = parsed or None
 
         def prepare_record(record):
             if job.should_abort():
                 return None
             labels = set(infer_labels_from_path(record.path))
+            if include_fine_labels:
+                if merge_fine_labels:
+                    existing_labels = existing_labels_by_path.get(str(record.path), [])
+                    labels.update(label for label in existing_labels if label.startswith("yolo:"))
+                fine_labels = infer_fine_yolo_labels(
+                    record.path,
+                    include_person=False,
+                    label_filter=fine_label_filter,
+                )
+                labels.update(fine_labels)
             person_matches, person_count = match_persons_for_photo(
                 db_path=db_path,
                 photo_path=record.path,
@@ -200,6 +276,12 @@ class AdminService:
                     total_skipped += 1
                     continue
             to_process.append(record)
+
+        existing_labels_by_path = (
+            get_photo_labels_map(db_path=db_path, paths=[record.path for record in to_process])
+            if include_fine_labels and merge_fine_labels
+            else {}
+        )
 
         job.total = len(to_process)
         job.message = f"Verarbeite {len(to_process)} Bilder (übersprungen: {total_skipped})"
@@ -488,4 +570,152 @@ class AdminService:
             rng.shuffle(shuffled)
             return shuffled
         return AdminService._build_mixed_rematch_order(photo_paths, sort_ts_by_path, seed=seed)
+
+    def _execute_detect_objects(
+        self,
+        job: JobProgress,
+        photo_roots: list[str],
+        model_name: Optional[str] = None,
+        confidence: Optional[float] = None,
+        device: Optional[str] = None,
+        labels_filter: Optional[str] = None,
+        include_person: bool = False,
+    ) -> None:
+        """Führt Objekt-Erkennung aus."""
+        from ..detectors.labels import (
+            configure_yolo_runtime,
+            initialize_yolo_settings,
+            summarize_object_detections,
+        )
+
+        db_path = self.app_config.resolve_db_path()
+        if db_path.exists():
+            initialize_yolo_settings(db_path)
+
+        configure_yolo_runtime(model_name=model_name, confidence=confidence, device=device)
+
+        # Sammle alle Bilder
+        all_images = []
+        for root_str in photo_roots:
+            if job.should_abort():
+                job.message = "Abbruch angefordert (Scan-Phase)"
+                return
+            root = Path(root_str)
+            images = scan_images(root=root, supported_extensions=self.app_config.supported_extensions)
+            all_images.extend(images)
+
+        total_images = len(all_images)
+        job.total = total_images
+        job.message = f"Erkenne Objekte in {total_images} Bildern..."
+
+        if not all_images:
+            job.message = "Keine Bilder gefunden"
+            return
+
+        label_filter = None
+        if labels_filter:
+            label_filter = set(part.strip().lower() for part in labels_filter.split(",") if part.strip())
+
+        processed = 0
+        processed_with_detections = 0
+
+        for record in all_images:
+            if job.should_abort():
+                job.message = "Abbruch angefordert"
+                return
+
+            try:
+                summary = summarize_object_detections(
+                    record.path,
+                    include_person=include_person,
+                    label_filter=label_filter,
+                )
+                if summary.labels:
+                    processed_with_detections += 1
+            except Exception as e:
+                job.message = f"Fehler bei {record.path}: {str(e)}"
+
+            processed += 1
+            self.job_manager.update_progress(
+                job.job_id,
+                processed,
+                job.total,
+                f"Verarbeitet: {processed}, mit Treffer: {processed_with_detections}",
+            )
+
+        job.message = f"✓ {processed} Bilder analysiert, {processed_with_detections} mit Objekten gefunden"
+
+    def _execute_backfill_fine_labels(self, job: JobProgress, photo_roots: list[str]) -> None:
+        """Füllt fehlende yolo:* Labels nach, ohne kompletten Reindex."""
+        from ..detectors.labels import initialize_yolo_settings
+
+        db_path = self.app_config.resolve_db_path()
+        if not db_path.exists():
+            raise ValueError(f"Index nicht gefunden: {db_path}")
+
+        ensure_schema(db_path)
+        initialize_yolo_settings(db_path)
+
+        admin_config = get_admin_config(db_path)
+        raw_csv = str(admin_config.get("yolo_label_allowlist_csv", "")).strip()
+        fine_label_filter = {
+            label.strip().lower()
+            for label in raw_csv.split(",")
+            if label.strip()
+        } or None
+
+        all_images = []
+        for root_str in photo_roots:
+            if job.should_abort():
+                job.message = "Abbruch angefordert (Scan-Phase)"
+                return
+            root = Path(root_str)
+            all_images.extend(scan_images(root=root, supported_extensions=self.app_config.supported_extensions))
+
+        if not all_images:
+            job.message = "Keine Bilder gefunden"
+            return
+
+        labels_by_path = get_photo_labels_map(db_path=db_path, paths=[record.path for record in all_images])
+        to_backfill = [
+            record
+            for record in all_images
+            if not any(label.startswith("yolo:") for label in labels_by_path.get(str(record.path), []))
+        ]
+
+        if not to_backfill:
+            job.total = 0
+            job.message = "Keine fehlenden Fine-Labels gefunden"
+            return
+
+        job.total = len(to_backfill)
+        processed = 0
+        updated = 0
+
+        for record in to_backfill:
+            if job.should_abort():
+                job.message = "Abbruch angefordert"
+                return
+
+            existing = set(labels_by_path.get(str(record.path), []))
+            fine_labels = infer_fine_yolo_labels(
+                record.path,
+                include_person=False,
+                label_filter=fine_label_filter,
+            )
+            merged = sorted(existing.union(fine_labels))
+
+            if merged != sorted(existing):
+                update_photo_labels_only(db_path=db_path, photo_path=str(record.path), labels=merged)
+                updated += 1
+
+            processed += 1
+            self.job_manager.update_progress(
+                job.job_id,
+                processed,
+                job.total,
+                f"Backfill: {processed}/{job.total}, aktualisiert: {updated}",
+            )
+
+        job.message = f"✓ Fine-Label-Backfill fertig: {processed} geprüft, {updated} aktualisiert"
 

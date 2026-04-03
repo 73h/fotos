@@ -19,12 +19,15 @@ ADMIN_CONFIG_DEFAULTS: dict[str, object] = {
     "index_workers": 1,
     "near_duplicates": False,
     "phash_threshold": 6,
+    "include_fine_labels": False,
+    "merge_fine_labels": False,
     "rematch_workers": 1,
     "rematch_order": "mixed",
     # YOLO-Objekterkennung (für maximale Qualität + GPU)
     "yolo_model": "yolov8n.pt",
     "yolo_confidence": 0.25,
     "yolo_device": "0",  # GPU-Device, "cpu" für CPU
+    "yolo_label_allowlist_csv": "Car, Bicycle, Building, Bridge, Street sign, Laptop, Phone, Table, Chair, Food, Drink, Book, Backpack, Sunset, Sunrise, Beach, Mountain, Tree, Flower, Snow, Sky, Road, Traffic light, Window, Door, Person, Crowd, Animal, Vehicle, Boat, Airplane, Train, Bus, Motorcycle, Dog, Cat, Bird, Horse, Cow, Sheep, Deer, Fish, Butterfly, Bee, Elephant, Lion, Tiger, Bear, Squirrel",
     # Personen-Matching (für maximale Qualität)
     "person_backend": "insightface",  # "auto", "insightface" oder "histogram"
     "person_threshold": 0.38,
@@ -247,6 +250,8 @@ def _normalize_admin_config(raw_config: dict[str, object]) -> dict[str, object]:
 
     normalized["force_reindex"] = bool(raw_config.get("force_reindex", normalized["force_reindex"]))
     normalized["near_duplicates"] = bool(raw_config.get("near_duplicates", normalized["near_duplicates"]))
+    normalized["include_fine_labels"] = bool(raw_config.get("include_fine_labels", normalized["include_fine_labels"]))
+    normalized["merge_fine_labels"] = bool(raw_config.get("merge_fine_labels", normalized["merge_fine_labels"]))
 
     try:
         normalized["index_workers"] = max(1, int(raw_config.get("index_workers", normalized["index_workers"])))
@@ -283,6 +288,10 @@ def _normalize_admin_config(raw_config: dict[str, object]) -> dict[str, object]:
     yolo_device = raw_config.get("yolo_device", normalized["yolo_device"])
     if isinstance(yolo_device, str):
         normalized["yolo_device"] = yolo_device.strip() or "0"
+
+    yolo_label_allowlist_csv = raw_config.get("yolo_label_allowlist_csv", normalized["yolo_label_allowlist_csv"])
+    if isinstance(yolo_label_allowlist_csv, str):
+        normalized["yolo_label_allowlist_csv"] = yolo_label_allowlist_csv.strip()
 
     # Personen-Backend (legacy support für None)
     if raw_config.get("person_backend") is None:
@@ -582,6 +591,59 @@ def get_photo_metadata_map(
                 metadata_by_path[row[0]] = (int(row[1]), float(row[2]), bool(row[3]))
 
     return metadata_by_path
+
+
+def get_photo_labels_map(
+    db_path: Path,
+    paths: list[Path],
+) -> dict[str, list[str]]:
+    if not paths or not db_path.exists():
+        return {}
+
+    path_strings = [str(path) for path in paths]
+    labels_by_path: dict[str, list[str]] = {}
+    chunk_size = 900
+
+    with sqlite3.connect(db_path) as conn:
+        for start in range(0, len(path_strings), chunk_size):
+            chunk = path_strings[start : start + chunk_size]
+            placeholders = ",".join("?" for _ in chunk)
+            sql = f"""
+                SELECT path, labels_json
+                FROM photos
+                WHERE path IN ({placeholders})
+            """
+            rows = conn.execute(sql, chunk).fetchall()
+            for row in rows:
+                try:
+                    parsed = json.loads(row[1]) if row[1] else []
+                except (json.JSONDecodeError, TypeError):
+                    parsed = []
+                labels_by_path[row[0]] = [str(label) for label in parsed if isinstance(label, str)]
+
+    return labels_by_path
+
+
+def update_photo_labels_only(
+    db_path: Path,
+    photo_path: str,
+    labels: list[str],
+) -> None:
+    path_obj = Path(photo_path)
+    search_blob = " ".join(
+        [path_obj.as_posix().lower(), path_obj.stem.lower(), " ".join(labels)]
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE photos
+            SET labels_json = ?,
+                search_blob = ?
+            WHERE path = ?
+            """,
+            (json.dumps(labels), search_blob, photo_path),
+        )
 
 
 def _safe_split_query(query: str) -> list[str]:
