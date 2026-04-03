@@ -150,5 +150,4 @@ temp/
 *.tmp
 
 fotos.iml
-local.README.md
 .env.timelapse
