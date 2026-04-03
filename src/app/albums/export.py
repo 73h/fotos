@@ -8,7 +8,8 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageDraw, ImageFont
+import json as json_lib
 
 from ..index.store import ensure_schema
 
@@ -276,12 +277,119 @@ def _crop_image_to_ratio(
     return image.crop((left, top, right, bottom))
 
 
+def _get_place_name_from_coords(latitude: float, longitude: float) -> str | None:
+    """Nutzt Reverse-Geocoding (einfache Fallback-Methode ohne API)."""
+    try:
+        from urllib.request import Request, urlopen
+
+        url = (
+            "https://nominatim.openstreetmap.org/reverse"
+            f"?lat={latitude}&lon={longitude}&format=json&accept-language=de"
+        )
+        request_obj = Request(
+            url,
+            headers={
+                "User-Agent": "fotos-export/1.0",
+                "Accept": "application/json",
+            },
+        )
+        with urlopen(request_obj, timeout=5) as response:
+            data = json_lib.loads(response.read().decode("utf-8"))
+            address = data.get("address", {})
+            city = address.get("city") or address.get("town") or address.get("village")
+            if city:
+                return str(city).strip()
+            return None
+    except Exception:
+        return None
+
+
+def _get_image_metadata(db_path: Path, photo_path: Path) -> dict[str, str | None]:
+    """Lädt Metadaten aus der DB für ein Foto (Datum, Ort)."""
+    try:
+        with sqlite3.connect(db_path) as conn:
+            row = conn.execute(
+                "SELECT taken_ts, exif_json FROM photos WHERE path = ?",
+                (str(photo_path),),
+            ).fetchone()
+            if not row:
+                return {}
+
+            taken_ts, exif_json = row
+            metadata = {}
+
+            if taken_ts:
+                import datetime
+                dt = datetime.datetime.fromtimestamp(float(taken_ts))
+                metadata["date"] = dt.strftime("%d.%m.%Y")
+
+            if exif_json:
+                try:
+                    exif = json_lib.loads(exif_json)
+                    lat = exif.get("latitude")
+                    lon = exif.get("longitude")
+                    if lat is not None and lon is not None:
+                        place = _get_place_name_from_coords(float(lat), float(lon))
+                        if place:
+                            metadata["place"] = place
+                except Exception:
+                    pass
+
+            return metadata
+    except Exception:
+        return {}
+
+
+def _draw_metadata_overlay(image: Image.Image, date_text: str, place_text: str | None) -> Image.Image:
+    """Zeichnet Datum + Ort rechts unten auf das Bild mit dynamischem Kontrasting."""
+    try:
+        draw = ImageDraw.Draw(image)
+        width, height = image.size
+
+        font_size = max(8, int(height / 60))
+        try:
+            font = ImageFont.load_default()
+        except Exception:
+            font = ImageFont.load_default()
+
+        overlay_text = date_text
+        if place_text:
+            overlay_text += f"\n{place_text}"
+
+        bbox = draw.textbbox((0, 0), overlay_text, font=font)
+        text_width = bbox[2] - bbox[0] + 4
+        text_height = bbox[3] - bbox[1] + 4
+
+        padding = max(2, int(width / 200))
+        x = width - text_width - padding
+        y = height - text_height - padding
+
+        sample_region = image.crop((x, y, min(x + text_width, width), min(y + text_height, height)))
+        avg_color = sample_region.convert("L").getextrema()
+        avg_brightness = sum(avg_color) / 2 if avg_color else 128
+
+        text_color = (255, 255, 255) if avg_brightness < 128 else (0, 0, 0)
+        outline_color = (0, 0, 0) if avg_brightness < 128 else (255, 255, 255)
+
+        outline_width = 1
+        for adj_x in [-outline_width, 0, outline_width]:
+            for adj_y in [-outline_width, 0, outline_width]:
+                if adj_x != 0 or adj_y != 0:
+                    draw.text((x + adj_x, y + adj_y), overlay_text, font=font, fill=outline_color)
+
+        draw.text((x, y), overlay_text, font=font, fill=text_color)
+        return image
+    except Exception:
+        return image
+
+
 def export_album_zip(
     db_path: Path,
     cache_dir: Path,
     album_id: int,
     ratio_text: str,
     person_name: str | None = None,
+    add_metadata_overlay: bool = False,
 ) -> AlbumZipExportResult:
     ensure_schema(db_path)
     ratio_w, ratio_h = parse_ratio(ratio_text)
@@ -322,6 +430,13 @@ def export_album_zip(
                         target_box=target_box,
                         people_boxes=people_boxes,
                     )
+
+                    # Optionales Metadaten-Overlay
+                    if add_metadata_overlay:
+                        metadata = _get_image_metadata(db_path, photo_path)
+                        if metadata.get("date"):
+                            place_text = metadata.get("place")
+                            cropped = _draw_metadata_overlay(cropped, metadata["date"], place_text)
 
                 buffer = io.BytesIO()
                 cropped.save(buffer, format="JPEG", quality=92)

@@ -1231,6 +1231,7 @@ def api_album_export_zip(album_id: int):
     body = request.get_json(silent=True) or {}
     ratio = str(body.get("ratio", "1:1")).strip()
     person_name = str(body.get("person", "")).strip()
+    add_metadata_overlay = bool(body.get("add_metadata_overlay", False))
 
     try:
         parse_ratio(ratio)
@@ -1244,6 +1245,7 @@ def api_album_export_zip(album_id: int):
             album_id=album_id,
             ratio_text=ratio,
             person_name=person_name or None,
+            add_metadata_overlay=add_metadata_overlay,
         )
     except ValueError as error:
         return jsonify({"error": str(error)}), 400

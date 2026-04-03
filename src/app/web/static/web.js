@@ -899,6 +899,7 @@
       startBtn: document.getElementById("album-export-start-btn"),
       statusBox: document.getElementById("album-export-status"),
       downloadLink: document.getElementById("album-export-download-link"),
+      metadataInput: document.getElementById("album-export-metadata-input"),
     };
   }
 
@@ -920,6 +921,7 @@
     const payload = {
       person: ui.personInput ? ui.personInput.value.trim() : "",
       ratio: ui.ratioSelect ? ui.ratioSelect.value : "1:1",
+      add_metadata_overlay: Boolean(ui.metadataInput && ui.metadataInput.checked),
     };
 
     if (ui.startBtn) {
