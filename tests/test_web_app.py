@@ -1288,6 +1288,84 @@ class WebAppTests(unittest.TestCase):
                         with Image.open(image_file) as img:
                             self.assertEqual(img.width * 9, img.height * 16)
 
+    def test_album_zip_export_endpoint_supports_original_format_without_reencoding(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            workspace = Path(tmp_dir)
+            db_path = workspace / "data" / "photo_index.db"
+            cache_dir = workspace / "data" / "cache"
+            photos_dir = workspace / "photos"
+            photos_dir.mkdir(parents=True, exist_ok=True)
+            ensure_schema(db_path)
+
+            image_png = photos_dir / "source_a.png"
+            image_jpg = photos_dir / "source_b.jpg"
+            Image.new("RGB", (640, 480), color=(25, 120, 200)).save(image_png)
+            Image.new("RGB", (480, 640), color=(200, 120, 25)).save(image_jpg)
+
+            for image_path in (image_png, image_jpg):
+                stat = image_path.stat()
+                upsert_photo(
+                    db_path=db_path,
+                    record=ImageRecord(path=image_path, size_bytes=stat.st_size, modified_ts=stat.st_mtime),
+                    labels=["album", "export"],
+                    person_count=0,
+                )
+
+            app = create_app(
+                app_config=AppConfig.from_workspace(workspace_root=workspace),
+                custom_db_path=str(db_path),
+                custom_cache_dir=str(cache_dir),
+            )
+            client = app.test_client()
+
+            create_album_response = client.post(
+                "/albums",
+                data={"name": "Original Export Test", "q": "", "per_page": 24},
+            )
+            self.assertEqual(create_album_response.status_code, 200)
+
+            with sqlite3.connect(db_path) as conn:
+                album_row = conn.execute("SELECT id FROM albums WHERE name = ?", ("Original Export Test",)).fetchone()
+            self.assertIsNotNone(album_row)
+            album_id = int(album_row[0])
+
+            for photo_path in (image_png, image_jpg):
+                token = base64.urlsafe_b64encode(str(photo_path).encode("utf-8")).decode("ascii").rstrip("=")
+                add_response = client.post(
+                    f"/albums/{album_id}/add-photo",
+                    data={"photo_token": token},
+                )
+                self.assertEqual(add_response.status_code, 200)
+
+            export_response = client.post(
+                f"/api/albums/{album_id}/export-zip",
+                json={"ratio": "Original", "add_metadata_overlay": True},
+            )
+            self.assertEqual(export_response.status_code, 200)
+            export_payload = export_response.get_json()
+            assert export_payload is not None
+            self.assertTrue(export_payload["ok"])
+            self.assertEqual(export_payload["count"], 2)
+
+            download_response = client.get(str(export_payload["download_url"]))
+            self.assertEqual(download_response.status_code, 200)
+
+            expected_bytes = {
+                image_png.name: image_png.read_bytes(),
+                image_jpg.name: image_jpg.read_bytes(),
+            }
+            seen_suffixes: set[str] = set()
+            with zipfile.ZipFile(io.BytesIO(download_response.data), "r") as archive:
+                names = archive.namelist()
+                self.assertEqual(len(names), 2)
+                for entry_name in names:
+                    extracted_name = entry_name.split("_", 1)[1]
+                    seen_suffixes.add(Path(extracted_name).suffix.lower())
+                    self.assertIn(extracted_name, expected_bytes)
+                    self.assertEqual(archive.read(entry_name), expected_bytes[extracted_name])
+
+            self.assertEqual(seen_suffixes, {".png", ".jpg"})
+
     def test_album_zip_export_endpoint_forwards_exact_overlay_flag(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             workspace = Path(tmp_dir)

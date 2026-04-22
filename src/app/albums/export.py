@@ -25,6 +25,7 @@ _ALLOWED_RATIOS: dict[str, tuple[int, int]] = {
     "16:9": (16, 9),
     "1:1": (1, 1),
 }
+_ORIGINAL_EXPORT_FORMAT = "original"
 
 
 @dataclass(frozen=True)
@@ -41,14 +42,19 @@ def parse_ratio(value: str) -> tuple[int, int]:
     return ratio
 
 
+def is_original_export_format(value: str) -> bool:
+    return str(value or "").strip().lower() == _ORIGINAL_EXPORT_FORMAT
+
+
 def _slug(value: str) -> str:
     cleaned = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
     return cleaned or "all"
 
 
-def _safe_entry_name(index: int, photo_path: Path) -> str:
+def _safe_entry_name(index: int, photo_path: Path, *, keep_original_extension: bool = False) -> str:
     stem = re.sub(r"[^A-Za-z0-9._-]+", "_", photo_path.stem).strip("._") or f"foto_{index:04d}"
-    return f"{index:04d}_{stem}.jpg"
+    suffix = photo_path.suffix if keep_original_extension and photo_path.suffix else ".jpg"
+    return f"{index:04d}_{stem}{suffix}"
 
 
 def _get_album_name_and_paths(db_path: Path, album_id: int) -> tuple[str, list[Path]]:
@@ -461,7 +467,10 @@ def export_album_zip(
     metadata_include_place: bool = True,
 ) -> AlbumZipExportResult:
     ensure_schema(db_path)
-    ratio_w, ratio_h = parse_ratio(ratio_text)
+    export_original = is_original_export_format(ratio_text)
+    ratio_w = ratio_h = 0
+    if not export_original:
+        ratio_w, ratio_h = parse_ratio(ratio_text)
 
     album_name, photo_paths = _get_album_name_and_paths(db_path, album_id)
     if not photo_paths:
@@ -481,6 +490,17 @@ def export_album_zip(
     with zipfile.ZipFile(zip_path, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
         for index, photo_path in enumerate(photo_paths, start=1):
             if not photo_path.exists() or not photo_path.is_file():
+                continue
+
+            if export_original:
+                try:
+                    archive.writestr(
+                        _safe_entry_name(index=index, photo_path=photo_path, keep_original_extension=True),
+                        photo_path.read_bytes(),
+                    )
+                    exported_count += 1
+                except Exception:
+                    continue
                 continue
 
             target_box = _detect_target_face_box(photo_path, mean_embedding) if normalized_person else None

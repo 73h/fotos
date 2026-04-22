@@ -25,7 +25,7 @@ from ..albums.store import (
     rename_album,
     set_album_cover,
 )
-from ..albums.export import export_album_zip, parse_ratio
+from ..albums.export import export_album_zip, is_original_export_format, parse_ratio
 
 from ..index.store import ADMIN_REMATCH_ORDER_MODES, ensure_schema, get_admin_config, parse_search_filters, save_admin_config, update_person_labels
 from ..persons import list_persons
@@ -1237,7 +1237,8 @@ def api_album_export_zip(album_id: int):
     metadata_include_place = bool(body.get("metadata_include_place", True))
 
     try:
-        parse_ratio(ratio)
+        if not is_original_export_format(ratio):
+            parse_ratio(ratio)
     except ValueError as error:
         return jsonify({"error": str(error)}), 400
 

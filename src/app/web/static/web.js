@@ -906,6 +906,37 @@
     };
   }
 
+  function isOriginalAlbumExportSelected(ui) {
+    const selected = String(ui && ui.ratioSelect ? ui.ratioSelect.value : "").trim().toLowerCase();
+    return selected === "original";
+  }
+
+  function updateAlbumExportOptions() {
+    const ui = getAlbumExportElements();
+    if (!ui || !ui.panel || ui.panel.dataset.exportOptionsBound === "1") {
+      return;
+    }
+
+    const applyState = () => {
+      const isOriginal = isOriginalAlbumExportSelected(ui);
+      [ui.metadataInput, ui.metadataDateInput, ui.metadataPlaceInput, ui.metadataExactInput].forEach((el) => {
+        if (!el) {
+          return;
+        }
+        el.disabled = isOriginal;
+      });
+      if (isOriginal && ui.metadataInput) {
+        ui.metadataInput.checked = false;
+      }
+    };
+
+    if (ui.ratioSelect) {
+      ui.ratioSelect.addEventListener("change", applyState);
+    }
+    applyState();
+    ui.panel.dataset.exportOptionsBound = "1";
+  }
+
   function setAlbumExportStatus(text, isError = false) {
     const ui = getAlbumExportElements();
     if (!ui || !ui.statusBox) {
@@ -921,7 +952,8 @@
       return;
     }
 
-    const addMetadataOverlay = Boolean(ui.metadataInput && ui.metadataInput.checked);
+    const isOriginal = isOriginalAlbumExportSelected(ui);
+    const addMetadataOverlay = !isOriginal && Boolean(ui.metadataInput && ui.metadataInput.checked);
     const includeDate = Boolean(!ui.metadataDateInput || ui.metadataDateInput.checked);
     const includePlace = Boolean(!ui.metadataPlaceInput || ui.metadataPlaceInput.checked);
     if (addMetadataOverlay && !includeDate && !includePlace) {
@@ -1439,6 +1471,7 @@
     bindSearchFormEnhancements();
     bindTimelapseAiHint();
     initCollapsiblePanels(document);
+    updateAlbumExportOptions();
   });
   document.body.addEventListener("htmx:afterSwap", () => {
     initAlbumDragDrop(document);
@@ -1446,5 +1479,6 @@
     updateSearchMenuLinks();
     bindTimelapseAiHint();
     initCollapsiblePanels(document);
+    updateAlbumExportOptions();
   });
 })();
